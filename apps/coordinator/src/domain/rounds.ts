@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { conflict } from "@eadwyn/service-kit";
+import { notFound } from "@eadwyn/service-kit";
 import type { TrainingRound } from "@eadwyn/shared-protocol";
 import type { CoordinatorState } from "../state";
 
@@ -15,7 +14,7 @@ export function openRound(
 ): TrainingRound {
   const number = state.rounds.reduce((max, r) => Math.max(max, r.number), 0) + 1;
   const round: TrainingRound = {
-    roundId: randomUUID(),
+    roundId: crypto.randomUUID(),
     number,
     baseModelVersion: input.baseModelVersion,
     status: "collecting",
@@ -36,18 +35,26 @@ export function ensureActiveRound(
   return findActiveRound(state) ?? openRound(state, input);
 }
 
+/**
+ * Records that a node's update for a round arrived. Reports travel through a
+ * queue, so they may land after the round has already been merged and
+ * closed; they still count, because the learning did arrive. Only a round the
+ * coordinator never opened is refused.
+ */
 export function recordProgress(
-  state: CoordinatorState,
+  state: Pick<CoordinatorState, "rounds" | "lastSyncAt">,
   input: { roundId: string; nodeId: string; updateId: string; now: Date },
 ): TrainingRound {
-  const round = findActiveRound(state);
-  if (!round || round.roundId !== input.roundId) {
-    throw conflict("round_not_active", `round ${input.roundId} is not the active round`);
+  const round = state.rounds.find((r) => r.roundId === input.roundId);
+  if (!round) {
+    throw notFound(`round ${input.roundId}`);
   }
+  // Reports arrive at least once (queues and retries), and each node sends at
+  // most one update per round, so a repeat report changes nothing.
   if (!round.participatingNodeIds.includes(input.nodeId)) {
     round.participatingNodeIds.push(input.nodeId);
+    round.updatesReceived += 1;
   }
-  round.updatesReceived += 1;
   state.lastSyncAt = input.now.toISOString();
   return round;
 }

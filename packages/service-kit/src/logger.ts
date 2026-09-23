@@ -26,14 +26,13 @@ const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, e
 
 export function createLogger(options: LoggerOptions): Logger {
   const { service, format = "pretty", level = "info", bindings = {} } = options;
+  // console works on Node, in Workers (where it feeds Workers Logs) and in browsers.
   const write =
     options.write ??
     ((lvl: LogLevel, line: string) => {
-      if (lvl === "warn" || lvl === "error") {
-        process.stderr.write(`${line}\n`);
-      } else {
-        process.stdout.write(`${line}\n`);
-      }
+      if (lvl === "error") console.error(line);
+      else if (lvl === "warn") console.warn(line);
+      else console.log(line);
     });
 
   const emit = (lvl: LogLevel, message: string, meta?: LogMeta) => {

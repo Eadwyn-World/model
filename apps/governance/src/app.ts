@@ -6,9 +6,9 @@
  * decision log is the audit trail of how the mind changed.
  */
 import {
-  bestEffort,
   createServiceApp,
   type Logger,
+  requireInternal,
   validateJson,
   validateQuery,
   z,
@@ -17,52 +17,31 @@ import {
   type DecisionListResponse,
   DecisionRequestSchema,
   type DecisionResponse,
-  type MergeCandidate,
   MergeCandidateSchema,
   type MergeReviewListResponse,
   MergeStatusSchema,
   type ReviewerListResponse,
 } from "@eadwyn/shared-protocol";
 import type { Hono } from "hono";
-import {
-  acceptCandidate,
-  applyDecision,
-  buildReview,
-  findCandidate,
-  listReviews,
-  type Quorums,
-  recordPublication,
-  summarizeReviewers,
-} from "./domain/review";
-import type { GovernanceStore } from "./state";
+import type { GovernanceBackend } from "./backend";
+import type { ReviewerResolver } from "./reviewers";
 
 export interface GovernanceDeps {
-  store: GovernanceStore;
+  backend: GovernanceBackend;
+  resolveReviewer: ReviewerResolver;
   logger: Logger;
-  config: Quorums;
-  /** Publishes an approved candidate (normally: the coordinator). Resolves with the new version. */
-  publish?: (candidate: MergeCandidate) => Promise<{ version: string }>;
-  now?: () => Date;
   version?: string;
 }
 
 export function createGovernanceApp(deps: GovernanceDeps): Hono {
-  const { store, logger, config } = deps;
-  const now = deps.now ?? (() => new Date());
+  const { backend, resolveReviewer, logger } = deps;
 
   const app = createServiceApp({
     name: "governance",
     version: deps.version ?? "0.1.0",
     description: "Review queue and decision log for merges into the global model.",
     logger,
-    healthDetails: async () => {
-      const state = await store.read();
-      return {
-        pendingMerges: state.candidates.filter((c) => c.status === "pending").length,
-        decisions: state.decisions.length,
-        approvalQuorum: config.approvalQuorum,
-      };
-    },
+    healthDetails: () => backend.health(),
   });
 
   // --- merges ----------------------------------------------------------------
@@ -70,68 +49,31 @@ export function createGovernanceApp(deps: GovernanceDeps): Hono {
     "/v1/merges",
     validateQuery(z.object({ status: MergeStatusSchema.or(z.literal("all")).default("pending") })),
     async (c) => {
-      const { status } = c.req.valid("query");
-      const merges = listReviews(await store.read(), status, config);
+      const merges = await backend.listReviews(c.req.valid("query").status);
       const body: MergeReviewListResponse = { merges, total: merges.length };
       return c.json(body);
     },
   );
 
-  app.post("/v1/merges", validateJson(MergeCandidateSchema), async (c) => {
-    const candidate = await store.update((state) => acceptCandidate(state, c.req.valid("json")));
-    logger.info("candidate entered review", {
-      candidateId: candidate.candidateId,
-      roundId: candidate.roundId,
-      method: candidate.aggregation.method,
-    });
+  // Candidates come from the aggregator's merge pipeline, never from the public.
+  app.post("/v1/merges", requireInternal(), validateJson(MergeCandidateSchema), async (c) => {
+    const candidate = await backend.submitCandidate(c.req.valid("json"));
     return c.json({ candidate }, 201);
   });
 
-  app.get("/v1/merges/:candidateId", async (c) => {
-    const state = await store.read();
-    const candidate = findCandidate(state, c.req.param("candidateId"));
-    return c.json(buildReview(state, candidate, config));
-  });
+  app.get("/v1/merges/:candidateId", async (c) =>
+    c.json(await backend.getReview(c.req.param("candidateId"))),
+  );
 
   app.post("/v1/merges/:candidateId/decisions", validateJson(DecisionRequestSchema), async (c) => {
     const input = c.req.valid("json");
-    const candidateId = c.req.param("candidateId");
-    const { decision, candidate, outcome } = await store.update((state) =>
-      applyDecision(state, { ...input, candidateId, now: now() }, config),
-    );
-    logger.info("decision recorded", {
-      candidateId,
-      reviewerId: decision.reviewerId,
-      verdict: decision.verdict,
-      outcome,
+    const reviewerId = await resolveReviewer(c, input.reviewerId);
+    const outcome = await backend.decide(c.req.param("candidateId"), {
+      reviewerId,
+      verdict: input.verdict,
+      rationale: input.rationale,
     });
-
-    if (outcome === "approved" && deps.publish) {
-      const result = await bestEffort(logger, "publish approved merge", () =>
-        (deps.publish as NonNullable<typeof deps.publish>)(candidate),
-      );
-      await store.update((state) =>
-        recordPublication(
-          state,
-          candidateId,
-          result.ok
-            ? { version: result.value.version }
-            : {
-                error: result.error instanceof Error ? result.error.message : String(result.error),
-              },
-          now(),
-        ),
-      );
-      if (result.ok) {
-        logger.info("merge published", { candidateId, version: result.value.version });
-      }
-    }
-
-    const state = await store.read();
-    const body: DecisionResponse = {
-      decision,
-      review: buildReview(state, findCandidate(state, candidateId), config),
-    };
+    const body: DecisionResponse = outcome;
     return c.json(body, 201);
   });
 
@@ -140,18 +82,14 @@ export function createGovernanceApp(deps: GovernanceDeps): Hono {
     "/v1/decisions",
     validateQuery(z.object({ reviewerId: z.string().min(1).optional() })),
     async (c) => {
-      const { reviewerId } = c.req.valid("query");
-      const state = await store.read();
-      const decisions = state.decisions
-        .filter((d) => !reviewerId || d.reviewerId === reviewerId)
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      const decisions = await backend.listDecisions(c.req.valid("query").reviewerId);
       const body: DecisionListResponse = { decisions, total: decisions.length };
       return c.json(body);
     },
   );
 
   app.get("/v1/reviewers", async (c) => {
-    const reviewers = summarizeReviewers(await store.read());
+    const reviewers = await backend.listReviewers();
     const body: ReviewerListResponse = { reviewers, total: reviewers.length };
     return c.json(body);
   });

@@ -58,3 +58,16 @@ export function seedRegistry(now = new Date()): RegistryState {
   ];
   return { currentVersion: current.version, versions };
 }
+
+/** A real deployment's first day: only the genesis checkpoint is published. */
+export function genesisRegistry(now = new Date()): RegistryState {
+  const history = seedRegistry(now);
+  const genesis = history.versions.find((v) => v.version === "0.1.0");
+  if (!genesis) {
+    throw new Error("seed history is missing the genesis version");
+  }
+  return {
+    currentVersion: genesis.version,
+    versions: [{ ...genesis, publishedAt: now.toISOString() }],
+  };
+}

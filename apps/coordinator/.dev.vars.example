@@ -1,0 +1,3 @@
+# Local `wrangler dev` only (copied to .dev.vars by scripts/ensure-dev-vars.mjs; never deployed).
+# The coordinator needs no secrets. Uncomment to develop against the fixture world instead of genesis:
+# SEED_MODE=fixtures

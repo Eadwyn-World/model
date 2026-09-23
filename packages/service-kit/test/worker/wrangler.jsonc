@@ -1,0 +1,20 @@
+// Test-only Worker: gives the store tests a real Durable Object and D1 database.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "service-kit-store-tests",
+  "main": "index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "PROBE", "class_name": "StoreProbe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["StoreProbe"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "service-kit-tests",
+      "database_id": "local",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

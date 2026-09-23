@@ -1,0 +1,31 @@
+// Cloudflare deployment of the coordinator. See docs/deploy/cloudflare.md.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eadwyn-coordinator",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // Declared secrets make generated types independent of anyone's local .dev.vars.
+  "secrets": { "required": [] },
+  "observability": { "enabled": true },
+  "vars": {
+    // A real deployment starts at the genesis version with no fake history.
+    "SEED_MODE": "genesis",
+    "LOG_LEVEL": "info",
+    "COORDINATOR_EXPECTED_NODES": "16",
+    "COORDINATOR_ONLINE_WINDOW_MINUTES": "360"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "FEDERATION", "class_name": "Federation" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Federation"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eadwyn-coordinator",
+      // Filled in by `pnpm cf:provision`; any value works for local development.
+      "database_id": "00000000-0000-4000-8000-000000000101",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

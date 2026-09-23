@@ -70,3 +70,53 @@ describe("federation client", () => {
     await expect(client.coordinator.getStats()).rejects.toMatchObject({ code: "not_configured" });
   });
 });
+
+describe("per-service transports", () => {
+  it("routes each service through its own fetch, e.g. a service binding", async () => {
+    const seen: string[] = [];
+    const binding = (name: string) =>
+      (async (input: RequestInfo | URL) => {
+        seen.push(
+          `${name} ${new URL(input instanceof Request ? input.url : input.toString()).pathname}`,
+        );
+        return Response.json(sampleFederationStats());
+      }) as typeof fetch;
+    const client = createFederationClient({
+      transports: { coordinator: binding("coordinator"), governance: binding("governance") },
+    });
+    await client.coordinator.getStats();
+    await client.governance.listReviewers().catch(() => undefined);
+    await expect(client.aggregator.listUpdates()).rejects.toMatchObject({ code: "not_configured" });
+    expect(seen).toEqual(["coordinator /v1/stats", "governance /v1/reviewers"]);
+  });
+
+  it("uploads deltas to the aggregator or straight to storage", async () => {
+    const puts: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      puts.push(`${init.method} ${String(input)} ${JSON.stringify(init.headers)}`);
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    const client = createFederationClient({
+      aggregatorUrl: "http://aggregator.test",
+      fetch: fetchImpl,
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    await client.aggregator.uploadDelta(
+      { mode: "unavailable", uri: "local://x", headers: {}, maxBytes: 10 },
+      bytes,
+    );
+    await client.aggregator.uploadDelta(
+      {
+        mode: "presigned",
+        uri: "store://deltas/k",
+        url: "https://r2.test/k?X-Amz-Signature=s",
+        headers: { "x-amz-checksum-sha256": "abc" },
+        maxBytes: 10,
+      },
+      bytes,
+    );
+    expect(puts).toEqual([
+      'PUT https://r2.test/k?X-Amz-Signature=s {"x-amz-checksum-sha256":"abc"}',
+    ]);
+  });
+});

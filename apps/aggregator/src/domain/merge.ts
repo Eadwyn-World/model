@@ -1,93 +1,146 @@
 /**
- * Mock aggregation: folds a round's updates into a MergeCandidate.
- *
- * No weights are touched. The checkpoint reference is derived from the set of
- * update digests, so the same inputs always produce the same candidate hash,
- * and the metrics are combined the way the named method would combine them.
- * Real FedAvg / robust aggregation plugs in behind this function.
+ * Proposing a merge: fold a round's updates into a manifest (which deltas,
+ * with which weights) and a pending candidate. The weight math happens later,
+ * in the pipeline, wherever the aggregation backend runs.
  */
-import { createHash, randomUUID } from "node:crypto";
-import { badRequest, conflict } from "@eadwyn/service-kit";
+import { badRequest, conflict, type ObjectStore } from "@eadwyn/service-kit";
 import {
   type AggregationMethod,
   bumpVersion,
+  canonicalJson,
   type MergeCandidate,
+  type MergeManifest,
+  manifestObjectKey,
+  parseStoreUri,
   type StoredUpdate,
+  sha256Hex,
+  storeUri,
+  utf8Encode,
 } from "@eadwyn/shared-protocol";
-import { MOCK_CHECKPOINT_BYTES } from "@eadwyn/shared-protocol/fixtures";
 
-export function buildMergeCandidate(input: {
+export interface ProposedMerge {
+  candidate: MergeCandidate;
+  manifest: MergeManifest;
+  /** Total bytes of the deltas the backend must read. */
+  inputBytes: number;
+  /** Updates left out because their deltas are not in object storage. */
+  skipped: number;
+}
+
+export async function proposeMerge(options: {
   roundId: string;
   method: AggregationMethod;
   updates: StoredUpdate[];
+  objectStore?: ObjectStore;
   now: Date;
-}): MergeCandidate {
-  const { roundId, method, updates, now } = input;
-  if (updates.length === 0) {
-    throw badRequest("no_updates", `round ${roundId} has no accepted updates to merge`);
-  }
-  const baseVersions = new Set(updates.map((u) => u.baseModelVersion));
-  if (baseVersions.size > 1) {
-    throw conflict(
-      "mixed_base_versions",
-      `updates in round ${roundId} start from different versions: ${[...baseVersions].join(", ")}`,
+}): Promise<ProposedMerge> {
+  const { roundId, method, now } = options;
+  // Only updates whose bytes are in storage can be aggregated.
+  const eligible = options.updates.filter((u) => parseStoreUri(u.delta.uri) !== null);
+  const skipped = options.updates.length - eligible.length;
+  if (eligible.length === 0) {
+    throw badRequest(
+      "no_updates",
+      options.updates.length === 0
+        ? `round ${roundId} has no accepted updates to merge`
+        : `round ${roundId} has no updates with stored deltas to merge`,
     );
   }
-  const baseModelVersion = updates[0]?.baseModelVersion as string;
-  const totalSamples = updates.reduce((sum, u) => sum + u.metrics.samples, 0);
-  const participantCount = new Set(updates.map((u) => u.nodeId)).size;
-  const lossBefore = weightedMean(updates.map((u) => [u.metrics.lossBefore, u.metrics.samples]));
-  const lossAfter = combine(method, updates);
+  const bases = new Set(eligible.map((u) => u.baseModelVersion));
+  if (bases.size > 1) {
+    throw conflict(
+      "mixed_base_versions",
+      `updates in round ${roundId} start from different versions: ${[...bases].join(", ")}`,
+    );
+  }
+  const baseModelVersion = eligible[0]?.baseModelVersion as string;
+  const totalSamples = eligible.reduce((sum, u) => sum + u.metrics.samples, 0);
+  const candidateId = crypto.randomUUID();
 
-  const candidateId = randomUUID();
-  const digest = createHash("sha256");
-  digest.update(method);
-  for (const sha of updates.map((u) => u.delta.sha256).sort()) {
-    digest.update(sha);
+  const manifest: MergeManifest = {
+    schema: "eadwyn.merge-manifest/1",
+    candidateId,
+    roundId,
+    baseModelVersion,
+    method,
+    inputs: eligible.map((u) => ({
+      updateId: u.updateId,
+      nodeId: u.nodeId,
+      delta: u.delta,
+      samples: u.metrics.samples,
+      weight: Math.round((u.metrics.samples / totalSamples) * 1e9) / 1e9,
+    })),
+    createdAt: now.toISOString(),
+  };
+  const manifestBytes = utf8Encode(canonicalJson(manifest));
+  const manifestRef = {
+    uri: storeUri("checkpoints", manifestObjectKey(roundId, candidateId)),
+    sha256: await sha256Hex(manifestBytes),
+    bytes: manifestBytes.byteLength,
+  };
+  if (options.objectStore) {
+    await options.objectStore.put(
+      "checkpoints",
+      manifestObjectKey(roundId, candidateId),
+      manifestBytes,
+      {
+        sha256: manifestRef.sha256,
+        bytes: manifestRef.bytes,
+      },
+    );
   }
 
-  return {
+  const participants = new Set(eligible.map((u) => u.nodeId)).size;
+  const lossBefore = weightedMean(eligible.map((u) => [u.metrics.lossBefore, u.metrics.samples]));
+  const lossAfter = combine(method, eligible);
+  const summary = [
+    `${method} of ${eligible.length} updates (${totalSamples.toLocaleString("en-US")} samples) from ${participants} nodes.`,
+    `Weighted loss ${lossAfter.toFixed(2)}, down from ${lossBefore.toFixed(2)}.`,
+    skipped > 0 ? `${skipped} updates without stored deltas were left out.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const candidate: MergeCandidate = {
     candidateId,
     roundId,
     baseModelVersion,
     proposedVersion: bumpVersion(baseModelVersion, "minor"),
-    updateIds: updates.map((u) => u.updateId),
+    updateIds: eligible.map((u) => u.updateId),
     aggregation: {
       method,
-      participantCount,
+      participantCount: participants,
       totalSamples,
-      weightedLossAfter: round3(lossAfter),
+      weightedLossAfter: Math.round(lossAfter * 1000) / 1000,
     },
-    checkpoint: {
-      uri: `eadwyn://candidates/${roundId}/${candidateId}.safetensors`,
-      sha256: digest.digest("hex"),
-      bytes: MOCK_CHECKPOINT_BYTES,
-    },
+    // Until the pipeline has aggregated, the only artifact is the manifest.
+    checkpoint: manifestRef,
+    manifest: manifestRef,
     status: "pending",
-    summary: `${method} of ${updates.length} updates (${totalSamples.toLocaleString("en-US")} samples) from ${participantCount} nodes. Weighted loss ${round3(lossAfter).toFixed(2)}, down from ${round3(lossBefore).toFixed(2)}.`,
+    summary,
     createdAt: now.toISOString(),
+  };
+  return {
+    candidate,
+    manifest,
+    inputBytes: eligible.reduce((sum, u) => sum + u.delta.bytes, 0),
+    skipped,
   };
 }
 
 function combine(method: AggregationMethod, updates: StoredUpdate[]): number {
   const pairs = updates.map((u) => [u.metrics.lossAfter, u.metrics.samples] as [number, number]);
-  switch (method) {
-    case "fedavg":
-      return weightedMean(pairs);
-    case "median": {
-      const sorted = pairs.map(([loss]) => loss).sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 === 0
-        ? ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
-        : (sorted[mid] as number);
-    }
-    case "trimmed-mean": {
-      const sorted = pairs.slice().sort((a, b) => a[0] - b[0]);
-      const trim = Math.floor(sorted.length * 0.1);
-      const kept = sorted.slice(trim, sorted.length - trim);
-      return weightedMean(kept.length > 0 ? kept : sorted);
-    }
+  if (method === "fedavg") return weightedMean(pairs);
+  const sorted = pairs.map(([loss]) => loss).sort((a, b) => a - b);
+  if (method === "median") {
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
+      : (sorted[mid] as number);
   }
+  const trim = Math.floor(sorted.length * 0.1);
+  const kept = sorted.slice(trim, sorted.length - trim);
+  return kept.reduce((s, v) => s + v, 0) / kept.length;
 }
 
 function weightedMean(pairs: [number, number][]): number {
@@ -95,5 +148,3 @@ function weightedMean(pairs: [number, number][]): number {
   if (weight === 0) return 0;
   return pairs.reduce((sum, [value, w]) => sum + value * w, 0) / weight;
 }
-
-const round3 = (n: number) => Math.round(n * 1000) / 1000;

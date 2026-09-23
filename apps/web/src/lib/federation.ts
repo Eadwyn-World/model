@@ -4,8 +4,12 @@
  * One function, one shape. It asks the coordinator and governance through the
  * federation SDK; if the coordinator is unreachable it returns the built-in
  * snapshot so the page always renders, and says so in `source`.
+ *
+ * On Cloudflare the SDK's transports are the Worker's service bindings, so
+ * the calls stay inside Cloudflare's network and need no public service URL.
+ * On Node they are plain HTTP to COORDINATOR_URL / GOVERNANCE_URL.
  */
-import { createFederationClient } from "@eadwyn/federation-sdk";
+import { createFederationClient, type FederationClientOptions } from "@eadwyn/federation-sdk";
 import type { FederationStats } from "@eadwyn/shared-protocol";
 import { sampleFederationStats, sampleGovernanceSummary } from "@eadwyn/shared-protocol/fixtures";
 import { serverEnv } from "./env";
@@ -30,11 +34,17 @@ export async function getFederationSnapshot(): Promise<FederationSnapshot> {
     return snapshotFallback(env.COORDINATOR_URL, now, "EADWYN_DATA_SOURCE=mock");
   }
 
-  const client = createFederationClient({
-    coordinatorUrl: env.COORDINATOR_URL,
-    governanceUrl: env.GOVERNANCE_URL,
-    timeoutMs: 1_500,
-  });
+  const bindings = await serviceBindings();
+  const client = createFederationClient(
+    bindings
+      ? { transports: bindings, timeoutMs: 1_500 }
+      : {
+          coordinatorUrl: env.COORDINATOR_URL,
+          governanceUrl: env.GOVERNANCE_URL,
+          timeoutMs: 1_500,
+        },
+  );
+  const coordinatorLabel = bindings ? "service binding: eadwyn-coordinator" : env.COORDINATOR_URL;
 
   const [stats, merges, reviewers] = await Promise.allSettled([
     client.coordinator.getStats(),
@@ -47,7 +57,7 @@ export async function getFederationSnapshot(): Promise<FederationSnapshot> {
     if (env.EADWYN_DATA_SOURCE === "live") {
       throw new Error(`coordinator unreachable: ${reason}`);
     }
-    return snapshotFallback(env.COORDINATOR_URL, now, reason);
+    return snapshotFallback(coordinatorLabel, now, reason);
   }
 
   return {
@@ -59,7 +69,7 @@ export async function getFederationSnapshot(): Promise<FederationSnapshot> {
             reviewers: reviewers.status === "fulfilled" ? reviewers.value.total : 0,
           }
         : null,
-    source: { mode: "live", coordinatorUrl: env.COORDINATOR_URL },
+    source: { mode: "live", coordinatorUrl: coordinatorLabel },
     fetchedAt: now.toISOString(),
   };
 }
@@ -71,4 +81,30 @@ function snapshotFallback(coordinatorUrl: string, now: Date, reason: string): Fe
     source: { mode: "snapshot", coordinatorUrl, reason },
     fetchedAt: now.toISOString(),
   };
+}
+
+/**
+ * The Worker's COORDINATOR and GOVERNANCE service bindings, when this code is
+ * running inside Cloudflare Workers (OpenNext). Undefined on Node and during
+ * the build, where the page falls back to HTTP or the snapshot.
+ */
+async function serviceBindings(): Promise<FederationClientOptions["transports"] | undefined> {
+  if (globalThis.navigator?.userAgent !== "Cloudflare-Workers") {
+    return undefined;
+  }
+  const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+  const env = getCloudflareContext().env as unknown as Record<
+    string,
+    { fetch: typeof fetch } | undefined
+  >;
+  const bind = (binding: { fetch: typeof fetch } | undefined) =>
+    binding
+      ? (((input: RequestInfo | URL, init?: RequestInit) =>
+          binding.fetch(input, init)) as typeof fetch)
+      : undefined;
+  const coordinator = bind(env.COORDINATOR);
+  if (!coordinator) {
+    return undefined;
+  }
+  return { coordinator, governance: bind(env.GOVERNANCE) };
 }

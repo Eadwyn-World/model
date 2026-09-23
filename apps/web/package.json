@@ -2,13 +2,19 @@
   "name": "@eadwyn/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Public web surface. First page: the AI Model page — an open, federated mind, with a live federation readout.",
+  "description": "Public web surface. First page: the AI Model page \u2014 an open, federated mind, with a live federation readout.",
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start --port 3000",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .next .turbo next-env.d.ts"
+    "clean": "rm -rf .next .open-next .turbo .wrangler next-env.d.ts",
+    "cf:types": "wrangler types --env-interface CloudflareEnv --include-runtime=false cloudflare-env.d.ts",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview --port 3000",
+    "cf:check": "wrangler types --env-interface CloudflareEnv --include-runtime=false cloudflare-env.d.ts --check",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:dev": "node ../../scripts/ensure-dev-vars.mjs && opennextjs-cloudflare build && opennextjs-cloudflare preview --port 3000"
   },
   "dependencies": {
     "@eadwyn/federation-sdk": "workspace:*",
@@ -17,6 +23,7 @@
     "@fontsource-variable/fraunces": "^5.3.0",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@opennextjs/cloudflare": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -26,6 +33,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
   }
 }

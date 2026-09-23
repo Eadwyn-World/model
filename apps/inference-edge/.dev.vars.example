@@ -1,0 +1,4 @@
+# Local `wrangler dev` only (copied to .dev.vars by scripts/ensure-dev-vars.mjs; never deployed).
+# Workers AI needs a Cloudflare account; locally the edge answers with the labelled mock.
+INFERENCE_BACKEND=mock
+OPERATOR_TOKEN=local-dev-operator-token

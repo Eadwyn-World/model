@@ -8,7 +8,6 @@
  *    rejected when distinct rejections reach the rejection quorum
  *  - a merge candidate that leaves "pending" never comes back
  */
-import { randomUUID } from "node:crypto";
 import { conflict, notFound } from "@eadwyn/service-kit";
 import type {
   GovernanceDecision,
@@ -64,6 +63,7 @@ export function buildReview(
     },
     publishedVersion: publication?.version,
     publishError: publication?.error,
+    publishRetrying: publication?.error ? publication.retryable !== false : undefined,
   };
 }
 
@@ -109,7 +109,7 @@ export function applyDecision(
     );
   }
   const decision: GovernanceDecision = {
-    decisionId: randomUUID(),
+    decisionId: crypto.randomUUID(),
     candidateId: candidate.candidateId,
     reviewerId: input.reviewerId,
     verdict: input.verdict,
@@ -130,16 +130,36 @@ export function applyDecision(
 export function recordPublication(
   state: GovernanceState,
   candidateId: string,
-  result: { version: string } | { error: string },
+  result: { version: string } | { error: string; retryable: boolean },
   now: Date,
 ): void {
   const candidate = findCandidate(state, candidateId);
+  const attempts = (state.publications[candidateId]?.attempts ?? 0) + 1;
   if ("version" in result) {
     candidate.status = "published";
-    state.publications[candidateId] = { version: result.version, at: now.toISOString() };
+    state.publications[candidateId] = { version: result.version, attempts, at: now.toISOString() };
   } else {
-    state.publications[candidateId] = { error: result.error, at: now.toISOString() };
+    state.publications[candidateId] = {
+      error: result.error,
+      retryable: result.retryable,
+      attempts,
+      at: now.toISOString(),
+    };
   }
+}
+
+/** Approved candidates whose publish failed in a way a retry may fix. */
+export function pendingPublications(state: GovernanceState, maxAttempts: number): MergeCandidate[] {
+  return state.candidates.filter((candidate) => {
+    if (candidate.status !== "approved") return false;
+    const publication = state.publications[candidate.candidateId];
+    if (!publication) return true;
+    return (
+      !publication.version &&
+      publication.retryable !== false &&
+      (publication.attempts ?? 0) < maxAttempts
+    );
+  });
 }
 
 export function summarizeReviewers(state: GovernanceState): ReviewerSummary[] {

@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@eadwyn/federation-sdk": "workspace:*",
-    "@eadwyn/shared-protocol": "workspace:*"
+    "@eadwyn/shared-protocol": "workspace:*",
+    "@eadwyn/weights": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

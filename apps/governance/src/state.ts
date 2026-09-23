@@ -2,7 +2,7 @@
  * Governance state: candidates under review, the append-only decision log,
  * and what happened when approved candidates were published.
  */
-import { createJsonStore, type JsonStore } from "@eadwyn/service-kit";
+import type { JsonStore, StoreCodec } from "@eadwyn/service-kit";
 import {
   GovernanceDecisionSchema,
   IsoDateTimeSchema,
@@ -15,8 +15,12 @@ import { z } from "zod";
 export const PublicationSchema = z.object({
   version: SemverSchema.optional(),
   error: z.string().optional(),
+  /** False once retrying cannot help (stale base, version exists). */
+  retryable: z.boolean().optional(),
+  attempts: z.number().int().nonnegative().optional(),
   at: IsoDateTimeSchema,
 });
+export type Publication = z.infer<typeof PublicationSchema>;
 
 export const GovernanceStateSchema = z.object({
   candidates: z.array(MergeCandidateSchema),
@@ -25,16 +29,27 @@ export const GovernanceStateSchema = z.object({
 });
 export type GovernanceState = z.infer<typeof GovernanceStateSchema>;
 
-export function seedGovernanceState(now = new Date()): GovernanceState {
-  return sampleGovernanceHistory(now);
+export type SeedMode = "fixtures" | "genesis";
+
+export function emptyGovernanceState(): GovernanceState {
+  return { candidates: [], decisions: [], publications: {} };
+}
+
+export function seedGovernanceState(
+  mode: SeedMode = "fixtures",
+  now = new Date(),
+): GovernanceState {
+  return mode === "genesis" ? emptyGovernanceState() : sampleGovernanceHistory(now);
+}
+
+export function governanceCodec(
+  mode: SeedMode = "fixtures",
+  now?: () => Date,
+): StoreCodec<GovernanceState> {
+  return {
+    seed: () => seedGovernanceState(mode, now?.()),
+    parse: (raw) => GovernanceStateSchema.parse(raw),
+  };
 }
 
 export type GovernanceStore = JsonStore<GovernanceState>;
-
-export function createGovernanceStore(filePath: string, now?: () => Date): GovernanceStore {
-  return createJsonStore({
-    filePath,
-    seed: () => seedGovernanceState(now?.()),
-    parse: (raw) => GovernanceStateSchema.parse(raw),
-  });
-}

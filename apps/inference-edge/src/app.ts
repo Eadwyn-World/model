@@ -1,23 +1,34 @@
 /**
- * Inference edge HTTP surface.
- *
- * Public-facing and read-mostly. It serves the model version it has pulled
- * into its local registry; it never participates in training or review.
+ * Inference edge HTTP surface: public-facing and read-mostly. It serves the
+ * version in its served registry; it never trains or reviews.
  */
 import type { ModelRegistry } from "@eadwyn/model-registry";
-import { createServiceApp, type Logger, validateJson } from "@eadwyn/service-kit";
-import { InferenceRequestSchema } from "@eadwyn/shared-protocol";
+import { createServiceApp, type Logger, requireOperator, validateJson } from "@eadwyn/service-kit";
+import {
+  type EdgeSyncResponse,
+  InferenceRequestSchema,
+  type InferenceResponse,
+  type ModelVersion,
+} from "@eadwyn/shared-protocol";
 import type { Hono } from "hono";
-import { mockInfer } from "./mock-inference";
+import type { InferenceBackend } from "./backends";
+import { cacheKey, type ResponseCache } from "./cache";
+import { syncServedModel } from "./sync";
 
 export interface InferenceEdgeDeps {
   registry: ModelRegistry;
+  backend: InferenceBackend;
   logger: Logger;
+  cache?: ResponseCache;
+  cacheTtlSeconds?: number;
+  /** Fetches the coordinator's current version, for `POST /v1/sync`. */
+  fetchPublished?: () => Promise<ModelVersion>;
+  operatorToken?: string;
   version?: string;
 }
 
 export function createInferenceEdgeApp(deps: InferenceEdgeDeps): Hono {
-  const { registry, logger } = deps;
+  const { registry, backend, logger, cache } = deps;
 
   const app = createServiceApp({
     name: "inference-edge",
@@ -29,7 +40,11 @@ export function createInferenceEdgeApp(deps: InferenceEdgeDeps): Hono {
       return {
         servedModelVersion: model.version,
         architecture: model.architecture,
-        mockInference: true,
+        backend: backend.name,
+        runtimeModel: backend.model,
+        adapter: backend.adapter,
+        cache: cache ? "on" : "off",
+        mockInference: backend.name === "mock",
       };
     },
   });
@@ -42,12 +57,54 @@ export function createInferenceEdgeApp(deps: InferenceEdgeDeps): Hono {
   });
 
   app.post("/v1/infer", validateJson(InferenceRequestSchema), async (c) => {
-    const startedAt = performance.now();
+    const started = performance.now();
     const { prompt, maxTokens } = c.req.valid("json");
-    const model = await registry.getCurrent();
-    const response = mockInfer({ prompt, maxTokens, model, startedAt });
-    logger.debug("inference served", { modelVersion: model.version, tokens: response.usage });
-    return c.json(response);
+    const served = await registry.getCurrent();
+    const key = cache
+      ? await cacheKey({
+          modelVersion: served.version,
+          backend: backend.name,
+          model: backend.model,
+          adapter: backend.adapter,
+          prompt,
+          maxTokens,
+        })
+      : undefined;
+    if (cache && key) {
+      const hit = await cache.get(key);
+      if (hit) {
+        const body: InferenceResponse = {
+          ...hit,
+          cached: true,
+          latencyMs: Math.max(0, Math.round(performance.now() - started)),
+        };
+        return c.json(body);
+      }
+    }
+    const answer = await backend.infer({ prompt, maxTokens, served });
+    const body: InferenceResponse = {
+      ...answer,
+      cached: false,
+      latencyMs: Math.max(1, Math.round(performance.now() - started)),
+    };
+    // Mock answers are cheap; only real model output is worth caching.
+    if (cache && key && !body.mock) {
+      await cache.put(key, body, deps.cacheTtlSeconds ?? 3600);
+    }
+    logger.debug("inference served", { modelVersion: served.version, backend: body.backend });
+    return c.json(body);
+  });
+
+  app.post("/v1/sync", requireOperator(deps.operatorToken), async (c) => {
+    if (!deps.fetchPublished) {
+      return c.json(
+        { error: { code: "sync_unavailable", message: "no coordinator is configured" } },
+        503,
+      );
+    }
+    const result: EdgeSyncResponse = await syncServedModel(registry, deps.fetchPublished);
+    if (result.adopted) logger.info("adopted published model", { version: result.servedVersion });
+    return c.json(result);
   });
 
   return app;

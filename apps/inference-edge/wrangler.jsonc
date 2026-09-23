@@ -1,0 +1,43 @@
+// Cloudflare deployment of the inference edge. See docs/deploy/cloudflare.md.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eadwyn-inference-edge",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // Declared secrets make generated types independent of anyone's local .dev.vars.
+  "secrets": { "required": ["OPERATOR_TOKEN"] },
+  "observability": { "enabled": true },
+  "vars": {
+    "SEED_MODE": "genesis",
+    "LOG_LEVEL": "info",
+    // auto: UPSTREAM_INFERENCE_URL (a Pod GPU) if set, else Workers AI, else mock.
+    "INFERENCE_BACKEND": "auto",
+    "WORKERS_AI_MODEL": "@cf/mistral/mistral-7b-instruct-v0.2-lora",
+    // Set WORKERS_AI_LORA to the adapter uploaded with `wrangler ai finetune create`.
+    "INFERENCE_CACHE_TTL_SECONDS": "3600"
+    // Secrets: OPERATOR_TOKEN; for a Pod behind Access: UPSTREAM_ACCESS_CLIENT_ID,
+    // UPSTREAM_ACCESS_CLIENT_SECRET (or UPSTREAM_TOKEN).
+  },
+  "ai": { "binding": "AI" },
+  "kv_namespaces": [
+    // Filled in by `pnpm cf:provision`; any value works for local development.
+    { "binding": "RESPONSE_CACHE", "id": "00000000000000000000000000000104" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eadwyn-edge",
+      "database_id": "00000000-0000-4000-8000-000000000104",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "COORDINATOR_INTERNAL",
+      "service": "eadwyn-coordinator",
+      "entrypoint": "InternalApi"
+    }
+  ],
+  "triggers": { "crons": ["*/5 * * * *"] }
+}

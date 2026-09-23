@@ -11,6 +11,7 @@ import {
   createServiceApp,
   type Logger,
   notFound,
+  requireInternal,
   validateJson,
 } from "@eadwyn/service-kit";
 import {
@@ -25,7 +26,12 @@ import {
 } from "@eadwyn/shared-protocol";
 import type { Hono } from "hono";
 import { findNode, registerNode, touchNode } from "./domain/nodes";
-import { ensureActiveRound, recordProgress, rollRoundsAfterPublish } from "./domain/rounds";
+import {
+  ensureActiveRound,
+  findActiveRound,
+  recordProgress,
+  rollRoundsAfterPublish,
+} from "./domain/rounds";
 import { buildFederationStats } from "./domain/stats";
 import type { CoordinatorStore } from "./state";
 
@@ -59,8 +65,10 @@ export function createCoordinatorApp(deps: CoordinatorDeps): Hono {
     },
   });
 
-  /** Reads the active round, opening one if the state has none. */
+  /** Reads the active round, opening one only if the state has none (reads never write). */
   const activeRound = async () => {
+    const existing = findActiveRound(await store.read());
+    if (existing) return existing;
     const current = await registry.getCurrent();
     return store.update((state) =>
       ensureActiveRound(state, {
@@ -96,57 +104,76 @@ export function createCoordinatorApp(deps: CoordinatorDeps): Hono {
     return c.json(body);
   });
 
-  app.post("/v1/model/publish", validateJson(PublishModelRequestSchema), async (c) => {
-    const input = c.req.valid("json");
-    const at = now();
-    let model: Awaited<ReturnType<ModelRegistry["publish"]>>;
-    try {
-      model = await registry.publish({
-        parentVersion: input.parentVersion,
-        checkpoint: input.checkpoint,
-        changelog: input.changelog,
-        mergeCandidateId: input.candidateId,
-        publishedAt: at.toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof ModelRegistryError) {
-        throw conflict(error.code, error.message);
+  // Only governance may publish, and only through its service binding (or the
+  // internal token on Node). Publishing is idempotent per merge candidate.
+  app.post(
+    "/v1/model/publish",
+    requireInternal(),
+    validateJson(PublishModelRequestSchema),
+    async (c) => {
+      const input = c.req.valid("json");
+      const at = now();
+      let published: Awaited<ReturnType<ModelRegistry["publish"]>>;
+      try {
+        published = await registry.publish({
+          parentVersion: input.parentVersion,
+          checkpoint: input.checkpoint,
+          changelog: input.changelog,
+          mergeCandidateId: input.candidateId,
+          publishedAt: at.toISOString(),
+        });
+      } catch (error) {
+        if (error instanceof ModelRegistryError) {
+          throw conflict(error.code, error.message);
+        }
+        throw error;
       }
-      throw error;
-    }
-    const nextRound = await store.update((state) =>
-      rollRoundsAfterPublish(state, {
-        publishedRoundId: input.roundId,
-        newVersion: model.version,
-        expectedNodes: config.expectedNodes,
-        now: at,
-      }),
-    );
-    logger.info("published new global model", {
-      version: model.version,
-      candidateId: input.candidateId,
-      nextRound: nextRound.number,
-    });
-    const body: PublishModelResponse = { model, nextRound };
-    return c.json(body, 201);
-  });
+      const model = published.model;
+      if (!published.created) {
+        // A retried publish: the version exists and the rounds already rolled.
+        const body: PublishModelResponse = { model, nextRound: await activeRound() };
+        return c.json(body, 200);
+      }
+      const nextRound = await store.update((state) =>
+        rollRoundsAfterPublish(state, {
+          publishedRoundId: input.roundId,
+          newVersion: model.version,
+          expectedNodes: config.expectedNodes,
+          now: at,
+        }),
+      );
+      logger.info("published new global model", {
+        version: model.version,
+        candidateId: input.candidateId,
+        nextRound: nextRound.number,
+      });
+      const body: PublishModelResponse = { model, nextRound };
+      return c.json(body, 201);
+    },
+  );
 
   // --- rounds ----------------------------------------------------------------
   app.get("/v1/rounds/active", async (c) => c.json(await activeRound()));
 
-  app.post("/v1/rounds/active/progress", validateJson(RoundProgressRequestSchema), async (c) => {
-    const input = c.req.valid("json");
-    await activeRound();
-    const round = await store.update((state) => {
-      if (!findNode(state, input.nodeId)) {
-        throw notFound(`node ${input.nodeId}`);
-      }
-      touchNode(state, input.nodeId, now());
-      return recordProgress(state, { ...input, now: now() });
-    });
-    const body: RoundProgressResponse = { round };
-    return c.json(body);
-  });
+  // Reported by the aggregator (directly on Node, via a queue on Cloudflare).
+  app.post(
+    "/v1/rounds/active/progress",
+    requireInternal(),
+    validateJson(RoundProgressRequestSchema),
+    async (c) => {
+      const input = c.req.valid("json");
+      await activeRound();
+      const round = await store.update((state) => {
+        if (!findNode(state, input.nodeId)) {
+          throw notFound(`node ${input.nodeId}`);
+        }
+        touchNode(state, input.nodeId, now());
+        return recordProgress(state, { ...input, now: now() });
+      });
+      const body: RoundProgressResponse = { round };
+      return c.json(body);
+    },
+  );
 
   // --- nodes -----------------------------------------------------------------
   app.get("/v1/nodes", async (c) => {

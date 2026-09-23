@@ -13,7 +13,11 @@
       "!**/.turbo",
       "!**/node_modules",
       "!**/data",
-      "!pnpm-lock.yaml"
+      "!pnpm-lock.yaml",
+      "!**/.open-next",
+      "!**/.wrangler",
+      "!**/worker-configuration.d.ts",
+      "!**/cloudflare-env.d.ts"
     ]
   },
   "formatter": {

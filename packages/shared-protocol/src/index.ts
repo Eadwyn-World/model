@@ -5,7 +5,9 @@
  * signing helpers live in the `./signing` subpath, fixtures in `./fixtures`.
  */
 export * from "./api";
+export * from "./artifacts";
 export * from "./canonical";
+export * from "./encoding";
 export * from "./federation";
 export * from "./governance";
 export * from "./merge";

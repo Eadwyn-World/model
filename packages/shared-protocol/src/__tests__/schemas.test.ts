@@ -72,20 +72,39 @@ describe("canonical json", () => {
 });
 
 describe("signing", () => {
-  it("round-trips an Ed25519 signature and detects tampering", () => {
-    const keys = generateNodeKeyPair();
+  it("round-trips an Ed25519 signature and detects tampering", async () => {
+    const keys = await generateNodeKeyPair();
     const { signature: _signature, ...unsigned } = sampleTrainingUpdate();
-    const signature = signTrainingUpdate(unsigned, keys.privateKey);
+    const signature = await signTrainingUpdate(unsigned, keys.privateKey);
     const signed = { ...unsigned, signature };
 
-    expect(verifyTrainingUpdateSignature(signed, keys.publicKey)).toBe(true);
+    expect(await verifyTrainingUpdateSignature(signed, keys.publicKey)).toBe(true);
     expect(
-      verifyTrainingUpdateSignature(
+      await verifyTrainingUpdateSignature(
         { ...signed, metrics: { ...signed.metrics, samples: 999_999 } },
         keys.publicKey,
       ),
     ).toBe(false);
-    expect(verifyTrainingUpdateSignature(signed, generateNodeKeyPair().publicKey)).toBe(false);
+    const other = await generateNodeKeyPair();
+    expect(await verifyTrainingUpdateSignature(signed, other.publicKey)).toBe(false);
+    expect(
+      await verifyTrainingUpdateSignature({ ...signed, signature: "@@" }, keys.publicKey),
+    ).toBe(false);
+  });
+
+  it("hashes and encodes without Node-only APIs", async () => {
+    const { sha256Hex, bytesToBase64, base64ToBytes, hexToBytes, bytesToHex } = await import(
+      "../encoding"
+    );
+    expect(await sha256Hex("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+    const bytes = hexToBytes("00ff10");
+    expect(bytesToHex(base64ToBytes(bytesToBase64(bytes)))).toBe("00ff10");
+    const { parseStoreUri, storeUri, deltaObjectKey } = await import("../artifacts");
+    const uri = storeUri("deltas", deltaObjectKey("r", "u"));
+    expect(parseStoreUri(uri)).toEqual({ bucket: "deltas", key: "rounds/r/updates/u.safetensors" });
+    expect(parseStoreUri("local://x")).toBeNull();
   });
 });
 

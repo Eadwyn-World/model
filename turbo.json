@@ -64,6 +64,19 @@
     },
     "clean": {
       "cache": false
+    },
+    "cf:dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "cf:types": {
+      "cache": false
+    },
+    "cf:check": {
+      "cache": false
+    },
+    "test:workers": {
+      "outputs": []
     }
   }
 }

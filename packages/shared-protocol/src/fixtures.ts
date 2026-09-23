@@ -6,6 +6,7 @@
  * 96 of 128 nodes reporting, and two merge candidates are in review.
  */
 import type { StoredUpdate } from "./api";
+import { bytesToBase64, concatBytes, hexToBytes } from "./encoding";
 import type { FederationStats } from "./federation";
 import type { GovernanceDecision } from "./governance";
 import type { MergeCandidate } from "./merge";
@@ -84,9 +85,9 @@ const DEVICE_KINDS = ["canal sensor", "soil probe", "rooftop farm", "microgrid m
 
 function fixturePublicKey(random: () => number): string {
   // 12-byte SPKI prefix for Ed25519 followed by 32 key bytes.
-  const prefix = Buffer.from("302a300506032b6570032100", "hex");
-  const key = Buffer.from(hexFrom(random, 64), "hex");
-  return Buffer.concat([prefix, key]).toString("base64");
+  const prefix = hexToBytes("302a300506032b6570032100");
+  const key = hexToBytes(hexFrom(random, 64));
+  return bytesToBase64(concatBytes(prefix, key));
 }
 
 /** 128 deterministic nodes: 60 across six Catalyst Pods, 48 homes, 16 field devices, 4 labs. */

@@ -67,7 +67,13 @@ export function createServiceApp(options: ServiceAppOptions): Hono {
     ),
   );
 
-  app.onError((error, c) => {
+  app.onError(async (error, c) => {
+    // A request refused before its body was read (auth, validation) must still
+    // release the body; otherwise a Worker piping it to a Durable Object logs
+    // "Can't read from request stream after response has been sent".
+    if (c.req.raw.body && !c.req.raw.bodyUsed) {
+      await c.req.raw.body.cancel().catch(() => undefined);
+    }
     if (error instanceof HttpError) {
       return c.json(
         { error: { code: error.code, message: error.message, details: error.details } },

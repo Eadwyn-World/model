@@ -1,0 +1,3 @@
+# Local `wrangler dev` only (copied to .dev.vars by scripts/ensure-dev-vars.mjs; never deployed).
+# Cloudflare Access does not exist locally: reviewers name themselves in the request body.
+REVIEWER_AUTH=none

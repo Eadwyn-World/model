@@ -1,0 +1,2 @@
+# Local `wrangler dev` / OpenNext preview only (copied to .dev.vars; never deployed).
+NEXTJS_ENV=development

@@ -1,0 +1,42 @@
+// Cloudflare deployment of governance ("review merges"). See docs/deploy/cloudflare.md.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eadwyn-governance",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // Declared secrets make generated types independent of anyone's local .dev.vars.
+  "secrets": { "required": [] },
+  "observability": { "enabled": true },
+  "vars": {
+    "SEED_MODE": "genesis",
+    "LOG_LEVEL": "info",
+    "GOVERNANCE_APPROVAL_QUORUM": "2",
+    "GOVERNANCE_REJECTION_QUORUM": "1",
+    // Reviewers sign in through Cloudflare Access. Until ACCESS_TEAM_DOMAIN and
+    // ACCESS_AUD are set, decisions are refused (fail closed).
+    "REVIEWER_AUTH": "access",
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "MERGE_REVIEWS", "class_name": "MergeReview" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MergeReview"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eadwyn-governance",
+      "database_id": "00000000-0000-4000-8000-000000000103",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "services": [
+    // Publishing approved merges: the coordinator's internal entrypoint, never its public URL.
+    {
+      "binding": "COORDINATOR_INTERNAL",
+      "service": "eadwyn-coordinator",
+      "entrypoint": "InternalApi"
+    }
+  ]
+}

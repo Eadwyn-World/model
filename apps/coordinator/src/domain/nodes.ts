@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type { NodeIdentity, RegisterNodeRequestSchema } from "@eadwyn/shared-protocol";
 import type { z } from "zod";
 import type { CoordinatorState } from "../state";
+
+type NodeState = Pick<CoordinatorState, "nodes">;
 
 type RegisterNodeInput = z.output<typeof RegisterNodeRequestSchema>;
 
@@ -10,7 +11,7 @@ type RegisterNodeInput = z.output<typeof RegisterNodeRequestSchema>;
  * always maps to the same nodeId, so a node that restarts keeps its identity.
  */
 export function registerNode(
-  state: CoordinatorState,
+  state: NodeState,
   input: RegisterNodeInput,
   now: Date,
 ): { node: NodeIdentity; created: boolean } {
@@ -25,7 +26,7 @@ export function registerNode(
     return { node: existing, created: false };
   }
   const node: NodeIdentity = {
-    nodeId: randomUUID(),
+    nodeId: crypto.randomUUID(),
     displayName: input.displayName,
     role: input.role,
     podId: input.podId,
@@ -39,7 +40,7 @@ export function registerNode(
   return { node, created: true };
 }
 
-export function findNode(state: CoordinatorState, nodeId: string): NodeIdentity | undefined {
+export function findNode(state: NodeState, nodeId: string): NodeIdentity | undefined {
   return state.nodes.find((n) => n.nodeId === nodeId);
 }
 

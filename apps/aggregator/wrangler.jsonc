@@ -1,0 +1,83 @@
+// Cloudflare deployment of the aggregator. See docs/deploy/cloudflare.md.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eadwyn-aggregator",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // Declared secrets make generated types independent of anyone's local .dev.vars.
+  "secrets": { "required": ["UPLOAD_TOKEN_SECRET", "OPERATOR_TOKEN"] },
+  "observability": { "enabled": true },
+  "vars": {
+    "SEED_MODE": "genesis",
+    "LOG_LEVEL": "info",
+    "AGGREGATOR_VERIFY_SIGNATURES": "true",
+    // Direct uploads through a Worker are capped by its request body limit.
+    "AGGREGATOR_MAX_DELTA_BYTES": "67108864",
+    "UPLOAD_TTL_SECONDS": "900",
+    // auto: small merges run inside the Workflow step; larger ones go to
+    // MERGE_RUNNER_URL (a Pod) or, if unset, the merge-runner Container.
+    "AGGREGATION_BACKEND": "auto",
+    "INLINE_AGGREGATION_MAX_BYTES": "33554432",
+    "R2_DELTAS_BUCKET": "eadwyn-deltas",
+    "R2_CHECKPOINTS_BUCKET": "eadwyn-checkpoints"
+    // Secrets (wrangler secret put): UPLOAD_TOKEN_SECRET, OPERATOR_TOKEN,
+    // and optionally R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+    // (enables presigned direct-to-R2 uploads and the Container), MERGE_RUNNER_TOKEN.
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eadwyn-aggregator",
+      "database_id": "00000000-0000-4000-8000-000000000102",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "DELTAS", "bucket_name": "eadwyn-deltas" },
+    { "binding": "CHECKPOINTS", "bucket_name": "eadwyn-checkpoints" }
+  ],
+  "queues": {
+    "producers": [{ "binding": "FEDERATION_EVENTS", "queue": "eadwyn-federation-events" }],
+    "consumers": [
+      {
+        "queue": "eadwyn-federation-events",
+        "max_batch_size": 25,
+        "max_batch_timeout": 2,
+        "max_retries": 10,
+        "dead_letter_queue": "eadwyn-federation-events-dlq"
+      }
+    ]
+  },
+  "workflows": [
+    { "name": "eadwyn-merge-pipeline", "binding": "MERGE_PIPELINE", "class_name": "MergePipeline" }
+  ],
+  "services": [
+    {
+      "binding": "COORDINATOR_INTERNAL",
+      "service": "eadwyn-coordinator",
+      "entrypoint": "InternalApi"
+    },
+    {
+      "binding": "GOVERNANCE_INTERNAL",
+      "service": "eadwyn-governance",
+      "entrypoint": "InternalApi"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "MERGE_RUNNER", "class_name": "MergeRunnerContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MergeRunnerContainer"] }],
+  "containers": [
+    {
+      "class_name": "MergeRunnerContainer",
+      "image": "../merge-runner/Dockerfile",
+      "image_build_context": "../..",
+      "max_instances": 2,
+      "instance_type": "standard-1"
+    }
+  ],
+  // Local development runs merges inline and needs no Docker daemon.
+  // Set to true (with Docker running) to exercise the Container locally.
+  "dev": { "enable_containers": false }
+}

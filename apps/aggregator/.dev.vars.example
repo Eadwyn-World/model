@@ -1,0 +1,3 @@
+# Local `wrangler dev` only (copied to .dev.vars by scripts/ensure-dev-vars.mjs; never deployed).
+UPLOAD_TOKEN_SECRET=local-dev-upload-secret-not-for-production
+OPERATOR_TOKEN=local-dev-operator-token

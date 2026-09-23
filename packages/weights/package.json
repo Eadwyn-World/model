@@ -1,0 +1,23 @@
+{
+  "name": "@eadwyn/weights",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What travels, as bytes: a safetensors codec, federated aggregation (FedAvg, median, trimmed mean) over float32 tensors, and the aggregation job every backend runs.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "@eadwyn/shared-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -22,7 +22,13 @@
     "format": "biome format --write .",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "demo:round": "tsx scripts/demo-round.ts",
-    "clean": "turbo run clean && rm -rf node_modules/.cache"
+    "clean": "turbo run clean && rm -rf node_modules/.cache",
+    "dev:cf": "turbo run cf:dev --concurrency=20",
+    "test:workers": "turbo run test:workers",
+    "cf:types": "turbo run cf:types",
+    "cf:check": "turbo run cf:check",
+    "cf:provision": "tsx scripts/cf-provision.ts",
+    "cf:deploy": "pnpm --filter @eadwyn/coordinator cf:deploy && pnpm --filter @eadwyn/governance cf:deploy && pnpm --filter @eadwyn/aggregator cf:deploy && pnpm --filter @eadwyn/inference-edge cf:deploy && pnpm --filter @eadwyn/web cf:deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
@@ -32,6 +38,7 @@
     "@types/node": "^22.20.4",
     "tsx": "^4.23.15",
     "turbo": "^2.11.3",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "wrangler": "catalog:"
   }
 }

@@ -1,0 +1,32 @@
+// Cloudflare deployment of the web app (Next.js via OpenNext). See docs/deploy/cloudflare.md.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eadwyn-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Declared secrets make generated types independent of anyone's local .dev.vars.
+  "secrets": { "required": [] },
+  "observability": { "enabled": true },
+  // Static files (JS, CSS, fonts) are served by Workers Assets, before the Worker runs.
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "vars": {
+    // auto: read the coordinator through its service binding; fall back to the built-in snapshot.
+    "EADWYN_DATA_SOURCE": "auto"
+  },
+  "kv_namespaces": [
+    // ISR cache. Filled in by `pnpm cf:provision`; any value works for local development.
+    { "binding": "NEXT_INC_CACHE_KV", "id": "00000000000000000000000000000100" }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "NEXT_CACHE_DO_QUEUE", "class_name": "DOQueueHandler" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DOQueueHandler"] }],
+  "services": [
+    // Required by OpenNext for revalidation.
+    { "binding": "WORKER_SELF_REFERENCE", "service": "eadwyn-web" },
+    // Public, read-only entrypoints: the page never needs internal privileges.
+    { "binding": "COORDINATOR", "service": "eadwyn-coordinator" },
+    { "binding": "GOVERNANCE", "service": "eadwyn-governance" }
+  ]
+}

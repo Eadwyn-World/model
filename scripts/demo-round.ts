@@ -1,14 +1,18 @@
 /**
  * demo-round — one federated training round, end to end, against the local
- * services. Run `pnpm dev:services` (or `pnpm dev`) first, then `pnpm demo:round`.
+ * services: the Node stack (`pnpm dev:services`) or the Cloudflare stack under
+ * local workerd (`pnpm dev:cf`). Both listen on the same ports.
  *
  *   1. three mock nodes register with the coordinator
- *   2. each prepares a signed local update and submits it to the aggregator
- *   3. the aggregator folds the round into a merge candidate and forwards it
+ *   2. each trains locally, uploads its adapter delta, and submits a signed update
+ *   3. an operator starts the merge; the pipeline aggregates the deltas
+ *      (FedAvg over real safetensors) and forwards the candidate to governance
  *   4. two reviewers approve; governance asks the coordinator to publish
- *   5. the coordinator publishes the next version and opens the next round
+ *   5. the coordinator publishes the next version and opens the next round;
+ *      the inference edge syncs and serves it
  *
- * Nothing here is real machine learning. It is the contract flow, exercised.
+ * The training is simulated; the uploads, signatures, aggregation, review and
+ * publication are real.
  */
 import {
   createFederationClient,
@@ -64,8 +68,16 @@ const DEMO_NODES: {
   },
 ];
 
+const operatorToken = process.env.EADWYN_OPERATOR_TOKEN ?? "local-dev-operator-token";
+
 async function main() {
   const client = createFederationClient({ ...urls, timeoutMs: 8_000 });
+  // Operator actions (start a merge, sync the edge) carry the operator token.
+  const operator = createFederationClient({
+    ...urls,
+    timeoutMs: 8_000,
+    headers: { authorization: `Bearer ${operatorToken}` },
+  });
 
   step(0, "Waiting for the services");
   await Promise.all([
@@ -94,36 +106,58 @@ async function main() {
     );
   }
 
-  step(2, "Nodes learn locally and submit signed updates (only learning travels)");
+  step(
+    2,
+    "Nodes learn locally, upload their deltas, submit signed updates (only learning travels)",
+  );
   for (const [i, node] of nodes.entries()) {
     const config = DEMO_NODES[i];
     if (!config) continue;
-    const { update, delta } = await node.prepareLocalUpdate({
+    const prepared = await node.prepareLocalUpdate({
       samples: config.samples,
       knowledgeItemIds: ["ki-0004", "ki-0011"],
     });
-    const receipt = await node.submitUpdate(update);
+    const { update, delta, upload } = prepared;
+    const receipt = await node.submitUpdate(prepared);
     line(
-      `${config.displayName.padEnd(32)} loss ${update.metrics.lossBefore.toFixed(3)} → ${update.metrics.lossAfter.toFixed(3)} on ${config.samples} samples · delta ${(delta.byteLength / 1024).toFixed(0)} KiB · ${receipt.verification}`,
+      `${config.displayName.padEnd(32)} loss ${update.metrics.lossBefore.toFixed(3)} → ${update.metrics.lossAfter.toFixed(3)} on ${config.samples} samples · ${(delta.byteLength / 1024).toFixed(0)} KiB delta (${upload.mode} upload) · ${receipt.verification}`,
     );
   }
 
   const round = nodes[0]?.activeRound;
   if (!round) throw new Error("no active round after registration");
 
-  step(3, "The aggregator folds the round into a merge candidate");
-  const { candidate, forwardedToGovernance } = await client.aggregator.createMergeCandidate({
+  step(3, "An operator starts the merge; the pipeline aggregates and forwards it");
+  const { candidate } = await operator.aggregator.createMergeCandidate({
     roundId: round.roundId,
     method: "fedavg",
   });
   line(`${candidate.summary}`);
   line(
-    `candidate ${dim(candidate.candidateId)} · checkpoint sha256 ${dim(candidate.checkpoint.sha256.slice(0, 16))}… · proposed v${candidate.proposedVersion}`,
+    `candidate ${dim(candidate.candidateId)} · manifest sha256 ${dim(candidate.manifest?.sha256.slice(0, 16) ?? "")}… · proposed v${candidate.proposedVersion}`,
   );
-  if (!forwardedToGovernance) {
-    line("governance did not receive it automatically; submitting directly");
-    await client.governance.submitCandidate(candidate);
+  const deadline = Date.now() + 60_000;
+  let detail = await client.aggregator.getMergeCandidate(candidate.candidateId);
+  while (
+    !["forwarded", "failed"].includes(detail.pipeline?.status ?? "") &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    detail = await client.aggregator.getMergeCandidate(candidate.candidateId);
   }
+  for (const done of detail.pipeline?.steps ?? []) {
+    line(
+      `${dim("pipeline")} ${done.name.padEnd(22)} ${done.status}${done.detail ? dim(` · ${done.detail}`) : ""}`,
+    );
+  }
+  if (detail.pipeline?.status !== "forwarded") {
+    throw new Error(
+      `merge pipeline ${detail.pipeline?.status ?? "did not start"}: ${detail.pipeline?.error ?? "timed out"}`,
+    );
+  }
+  line(
+    `merged checkpoint ${dim(detail.candidate.checkpoint.uri)} · sha256 ${dim(detail.candidate.checkpoint.sha256.slice(0, 16))}…`,
+  );
 
   step(4, "Reviewers decide (governed merge)");
   const reviewers = [
@@ -154,11 +188,9 @@ async function main() {
       `round ${after.activeRound.number} is now ${after.activeRound.status} on base v${after.activeRound.baseModelVersion} · ${after.registeredNodes} nodes registered`,
     );
     try {
-      const served = await client.inferenceEdge.getModel();
+      const synced = await operator.inferenceEdge.sync();
       line(
-        dim(
-          `inference edge still serves v${served.version}; pulling published versions to the edge is the next milestone`,
-        ),
+        `inference edge ${synced.adopted ? "adopted" : "already serves"} v${synced.servedVersion}`,
       );
     } catch {
       line(dim("inference edge is not running; skip"));
@@ -178,6 +210,8 @@ main().catch((error) => {
   } else {
     console.error(`\n${error instanceof Error ? error.message : String(error)}`);
   }
-  console.error("Is the stack running? Start it with `pnpm dev:services` in another terminal.");
+  console.error(
+    "Is the stack running? Start it with `pnpm dev:services` (Node) or `pnpm dev:cf` (Cloudflare, local).",
+  );
   process.exit(1);
 });

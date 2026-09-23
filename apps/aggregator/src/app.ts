@@ -1,24 +1,26 @@
 /**
  * Aggregator HTTP surface.
  *
- * Accepts signed updates, keeps their references, and turns a round's updates
- * into a merge candidate that governance must review before anything is
- * published. Cross-service signals (progress to the coordinator, candidates
- * to governance) are best-effort so the aggregator keeps working when a
- * neighbour is down.
+ * Nodes ask where to put their delta, upload it, then submit the signed
+ * update that references it. Operators (or other services) start a merge;
+ * the pipeline aggregates and forwards the candidate to governance. Nothing
+ * here publishes: that is governance's decision.
  */
 import {
   bestEffort,
   createServiceApp,
   type Logger,
   notFound,
+  requireOperator,
   validateJson,
   validateQuery,
   z,
 } from "@eadwyn/service-kit";
 import {
   CreateMergeRequestSchema,
-  type MergeCandidate,
+  type DeltaUploadReceipt,
+  DeltaUploadRequestSchema,
+  type MergeCandidateDetail,
   type MergeCandidateListResponse,
   type MergeCandidateResponse,
   type StoredUpdate,
@@ -28,68 +30,104 @@ import {
   UuidSchema,
 } from "@eadwyn/shared-protocol";
 import type { Hono } from "hono";
-import { buildMergeCandidate } from "./domain/merge";
-import { type PublicKeyResolver, storeUpdate, validateUpdate } from "./domain/validate";
-import type { AggregatorStore } from "./state";
+import { acceptUpdate } from "./domain/accept";
+import { proposeMerge } from "./domain/merge";
+import { queuedPipeline } from "./domain/pipeline";
+import { issueUploadTarget, type UploadSettings, verifyUploadToken } from "./domain/uploads";
+import type { AggregatorContext, MergePipelineRunner } from "./ports";
 
-export interface AggregatorConfig {
-  maxDeltaBytes: number;
-  verifySignatures: boolean;
-}
-
-export interface AggregatorDeps {
-  store: AggregatorStore;
+export interface AggregatorDeps extends AggregatorContext {
   logger: Logger;
-  config: AggregatorConfig;
-  /** Looks up a node's public key (normally: ask the coordinator). */
-  resolvePublicKey?: PublicKeyResolver;
-  /** Fired after an update is stored (normally: report progress to the coordinator). */
-  onUpdateAccepted?: (update: StoredUpdate) => Promise<unknown>;
-  /** Sends a candidate to governance for review. */
-  forwardCandidate?: (candidate: MergeCandidate) => Promise<unknown>;
-  now?: () => Date;
+  uploads: UploadSettings;
+  pipeline: MergePipelineRunner;
+  /** After an update is stored: tell the coordinator (directly on Node, via a queue on Cloudflare). */
+  reportProgress?: (update: StoredUpdate) => Promise<unknown>;
+  operatorToken?: string;
   version?: string;
 }
 
 export function createAggregatorApp(deps: AggregatorDeps): Hono {
-  const { store, logger, config } = deps;
-  const now = deps.now ?? (() => new Date());
+  const { repository, objectStore, logger } = deps;
 
   const app = createServiceApp({
     name: "aggregator",
     version: deps.version ?? "0.1.0",
     description: "Receives signed node updates and proposes merge candidates.",
     logger,
-    healthDetails: async () => {
-      const state = await store.read();
-      return {
-        updates: state.updates.length,
-        candidates: state.candidates.length,
-        verifySignatures: config.verifySignatures,
-      };
-    },
+    healthDetails: async () => ({
+      ...(await repository.counts()),
+      verifySignatures: deps.verifySignatures,
+      objectStore: objectStore?.kind ?? "none",
+      uploads: objectStore?.presignPut ? "presigned" : objectStore ? "direct" : "unavailable",
+    }),
   });
 
-  // --- updates ---------------------------------------------------------------
-  app.post("/v1/updates", validateJson(TrainingUpdateSchema), async (c) => {
-    const update = c.req.valid("json");
-    const stored = await store.update(async (state) => {
-      const verification = await validateUpdate(state, update, {
-        maxDeltaBytes: config.maxDeltaBytes,
-        verifySignatures: config.verifySignatures,
-        resolvePublicKey: deps.resolvePublicKey,
-      });
-      return storeUpdate(state, update, verification, now());
+  // --- deltas ------------------------------------------------------------------
+  app.post("/v1/updates/upload-target", validateJson(DeltaUploadRequestSchema), async (c) => {
+    const target = await issueUploadTarget({
+      request: c.req.valid("json"),
+      origin: new URL(c.req.url).origin,
+      objectStore,
+      resolvePublicKey: deps.verifySignatures ? deps.resolvePublicKey : undefined,
+      settings: deps.uploads,
+      now: deps.now(),
     });
+    return c.json(target, 201);
+  });
+
+  app.put("/v1/deltas/:roundId/:updateId", async (c) => {
+    const roundId = UuidSchema.parse(c.req.param("roundId"));
+    const updateId = UuidSchema.parse(c.req.param("updateId"));
+    const { key, sha256, bytes } = await verifyUploadToken({
+      roundId,
+      updateId,
+      query: c.req.query(),
+      settings: deps.uploads,
+      now: deps.now(),
+    });
+    if (!objectStore) {
+      return c.json(
+        { error: { code: "upload_unavailable", message: "no object store is configured" } },
+        503,
+      );
+    }
+    const declared = Number(c.req.header("content-length") ?? Number.NaN);
+    if (!Number.isNaN(declared) && declared !== bytes) {
+      return c.json(
+        { error: { code: "delta_mismatch", message: `expected ${bytes} bytes, got ${declared}` } },
+        400,
+      );
+    }
+    const body = c.req.raw.body ?? new Uint8Array();
+    try {
+      const stored = await objectStore.put("deltas", key, body, { sha256, bytes });
+      const receipt: DeltaUploadReceipt = {
+        uri: `store://deltas/${key}`,
+        sha256: stored.sha256 ?? sha256,
+        bytes: stored.bytes,
+        storedAt: deps.now().toISOString(),
+      };
+      return c.json(receipt, 201);
+    } catch (error) {
+      if (error instanceof Error && error.name === "ObjectIntegrityError") {
+        return c.json({ error: { code: "delta_mismatch", message: error.message } }, 400);
+      }
+      throw error;
+    }
+  });
+
+  // --- updates -----------------------------------------------------------------
+  app.post("/v1/updates", validateJson(TrainingUpdateSchema), async (c) => {
+    const stored = await acceptUpdate(deps, c.req.valid("json"));
     logger.info("update accepted", {
       updateId: stored.updateId,
       nodeId: stored.nodeId,
       roundId: stored.roundId,
       verification: stored.verification,
     });
-    if (deps.onUpdateAccepted) {
+    if (deps.reportProgress) {
       await bestEffort(logger, "report round progress", () =>
-        (deps.onUpdateAccepted as NonNullable<typeof deps.onUpdateAccepted>)(stored),
+        (deps.reportProgress as NonNullable<typeof deps.reportProgress>)(stored),
       );
     }
     const body: SubmitUpdateResponse = {
@@ -102,68 +140,61 @@ export function createAggregatorApp(deps: AggregatorDeps): Hono {
   });
 
   app.get("/v1/updates", validateQuery(z.object({ roundId: UuidSchema.optional() })), async (c) => {
-    const { roundId } = c.req.valid("query");
-    const state = await store.read();
-    const updates = roundId ? state.updates.filter((u) => u.roundId === roundId) : state.updates;
+    const updates = await repository.listUpdates(c.req.valid("query").roundId);
     const body: UpdateListResponse = { updates, total: updates.length };
     return c.json(body);
   });
 
   app.get("/v1/updates/:updateId", async (c) => {
-    const update = (await store.read()).updates.find((u) => u.updateId === c.req.param("updateId"));
-    if (!update) {
-      throw notFound(`update ${c.req.param("updateId")}`);
-    }
+    const update = await repository.getUpdate(c.req.param("updateId"));
+    if (!update) throw notFound(`update ${c.req.param("updateId")}`);
     return c.json({ update });
   });
 
-  // --- merges ----------------------------------------------------------------
-  app.post("/v1/merges", validateJson(CreateMergeRequestSchema), async (c) => {
-    const { roundId, method } = c.req.valid("json");
-    const candidate = await store.update((state) => {
-      const built = buildMergeCandidate({
+  // --- merges ------------------------------------------------------------------
+  app.post(
+    "/v1/merges",
+    requireOperator(deps.operatorToken),
+    validateJson(CreateMergeRequestSchema),
+    async (c) => {
+      const { roundId, method } = c.req.valid("json");
+      const proposed = await proposeMerge({
         roundId,
         method,
-        updates: state.updates.filter((u) => u.roundId === roundId),
-        now: now(),
+        updates: await repository.listUpdates(roundId),
+        objectStore,
+        now: deps.now(),
       });
-      state.candidates.push(built);
-      return built;
-    });
-    logger.info("merge candidate produced", {
-      candidateId: candidate.candidateId,
-      roundId,
-      method,
-      updates: candidate.updateIds.length,
-    });
-    let forwardedToGovernance = false;
-    if (deps.forwardCandidate) {
-      const result = await bestEffort(logger, "forward candidate to governance", () =>
-        (deps.forwardCandidate as NonNullable<typeof deps.forwardCandidate>)(candidate),
-      );
-      forwardedToGovernance = result.ok;
-    }
-    const body: MergeCandidateResponse = { candidate, forwardedToGovernance };
-    return c.json(body, 201);
-  });
+      const pipeline = queuedPipeline(proposed.candidate.candidateId, deps.now());
+      await repository.insertCandidate(proposed.candidate, pipeline);
+      await deps.pipeline.start(proposed.candidate.candidateId);
+      logger.info("merge candidate proposed", {
+        candidateId: proposed.candidate.candidateId,
+        roundId,
+        method,
+        updates: proposed.candidate.updateIds.length,
+        skipped: proposed.skipped,
+      });
+      const body: MergeCandidateResponse = {
+        candidate: proposed.candidate,
+        forwardedToGovernance: false,
+        pipeline,
+      };
+      return c.json(body, 201);
+    },
+  );
 
   app.get("/v1/merges", async (c) => {
-    const state = await store.read();
-    const candidates = state.candidates
-      .slice()
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const candidates = await repository.listCandidates();
     const body: MergeCandidateListResponse = { candidates, total: candidates.length };
     return c.json(body);
   });
 
   app.get("/v1/merges/:candidateId", async (c) => {
-    const candidate = (await store.read()).candidates.find(
-      (m) => m.candidateId === c.req.param("candidateId"),
-    );
-    if (!candidate) {
-      throw notFound(`merge candidate ${c.req.param("candidateId")}`);
-    }
-    return c.json({ candidate });
+    const found = await repository.getCandidate(c.req.param("candidateId"));
+    if (!found) throw notFound(`merge candidate ${c.req.param("candidateId")}`);
+    const body: MergeCandidateDetail = found;
+    return c.json(body);
   });
 
   return app;

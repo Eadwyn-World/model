@@ -1,11 +1,21 @@
+/**
+ * Node entrypoint (local development and self-hosting).
+ * The Cloudflare entrypoint is src/worker/index.ts; both build the same app.
+ */
 import { join } from "node:path";
-import { createModelRegistry } from "@eadwyn/model-registry";
-import { createLogger, startService } from "@eadwyn/service-kit";
+import {
+  createModelRegistry,
+  genesisRegistry,
+  registryCodec,
+  seedRegistry,
+} from "@eadwyn/model-registry";
+import { createLogger } from "@eadwyn/service-kit";
+import { createFileStore, loadEnv, startService } from "@eadwyn/service-kit/node";
 import { createCoordinatorApp } from "./app";
-import { loadCoordinatorEnv } from "./env";
-import { createCoordinatorStore } from "./state";
+import { EnvSchema } from "./env";
+import { coordinatorCodec } from "./state";
 
-const env = loadCoordinatorEnv();
+const env = loadEnv(EnvSchema);
 const logger = createLogger({
   service: "coordinator",
   format: env.LOG_FORMAT,
@@ -13,8 +23,16 @@ const logger = createLogger({
 });
 
 const app = createCoordinatorApp({
-  store: createCoordinatorStore(join(env.DATA_DIR, "coordinator.json")),
-  registry: createModelRegistry({ filePath: join(env.DATA_DIR, "model-registry.json") }),
+  store: createFileStore({
+    filePath: join(env.DATA_DIR, "coordinator.json"),
+    ...coordinatorCodec(env.SEED_MODE),
+  }),
+  registry: createModelRegistry({
+    store: createFileStore({
+      filePath: join(env.DATA_DIR, "model-registry.json"),
+      ...registryCodec(env.SEED_MODE === "genesis" ? genesisRegistry : () => seedRegistry()),
+    }),
+  }),
   logger,
   config: {
     expectedNodes: env.COORDINATOR_EXPECTED_NODES,
@@ -22,4 +40,9 @@ const app = createCoordinatorApp({
   },
 });
 
-startService(app, { port: env.PORT, host: env.HOST, logger });
+startService(app, {
+  port: env.PORT,
+  host: env.HOST,
+  logger,
+  internalToken: env.INTERNAL_API_TOKEN,
+});
