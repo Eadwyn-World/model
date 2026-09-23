@@ -1,7 +1,8 @@
 # Architecture overview
 
-One repository, several deployable services, one set of typed contracts. The
-platform is the software side of a simple loop:
+One repository, several deployable services, one set of typed contracts, two
+runtimes (Node and Cloudflare Workers). The platform is the software side of a
+simple loop:
 
 > Nodes learn locally. Learning travels. The mind rebalances.
 
@@ -32,17 +33,19 @@ Read [`../philosophy.md`](../philosophy.md) for why it is shaped this way.
 | `apps/coordinator` | node registry, training rounds, the canonical model registry, the federation readout (`GET /v1/stats`) | see data, decide merges |
 | `apps/aggregator` | accepted updates, merge candidates | publish anything |
 | `apps/governance` | the pending queue, the decision log, quorum | train, aggregate |
-| `apps/inference-edge` | the served copy of the model, health, mock inference | take part in training |
+| `apps/inference-edge` | the served copy of the model, inference (Workers AI, a Pod, or mock), the response cache | take part in training |
 | `apps/web` | the public AI Model page | hold state |
+| `apps/merge-runner` | large aggregation jobs, in a Cloudflare Container or on a Pod GPU | decide anything |
 
 | Package | What it is |
 | --- | --- |
-| `packages/shared-protocol` | zod schemas + TypeScript types for every contract; canonical JSON; Ed25519 signing (`/signing`); deterministic fixtures (`/fixtures`) |
-| `packages/service-kit` | JSON file store, env loading, Hono app factory, logger, validators, best-effort helper |
-| `packages/model-registry` | current version, publish, history; JSON-backed |
-| `packages/training-runtime` | the mock local node: `registerNode()`, `prepareLocalUpdate()`, `submitUpdate()` |
+| `packages/shared-protocol` | zod schemas + TypeScript types for every contract; canonical JSON; WebCrypto Ed25519 signing (`/signing`); object keys; deterministic fixtures (`/fixtures`) |
+| `packages/service-kit` | the three-method document store (file, Durable Object, D1, memory), object storage (filesystem, R2, S3 API, presigned uploads), Hono app factory, caller and Access auth, env parsing, logger; Node-only helpers in `/node` |
+| `packages/model-registry` | current version, publish (idempotent per merge), adopt, history; on any store backend |
+| `packages/weights` | safetensors codec, FedAvg / median / trimmed-mean over float32 tensors, the verified aggregation job |
+| `packages/training-runtime` | the mock local node: `registerNode()`, `prepareLocalUpdate()`, `submitUpdate()`; produces real adapter deltas |
 | `packages/knowledge-index` | contributed knowledge items with provenance, seeded from the world |
-| `packages/federation-sdk` | typed HTTP client for all four services; validates responses |
+| `packages/federation-sdk` | typed client for all four services over HTTP or service bindings; validates responses |
 | `packages/ui` | design tokens, base styles, lattice/root motifs, a few primitives |
 
 ## One round, end to end
@@ -50,16 +53,22 @@ Read [`../philosophy.md`](../philosophy.md) for why it is shaped this way.
 1. A node registers with the coordinator, sending its Ed25519 public key. The
    coordinator assigns a `nodeId` (idempotent on the key) and returns the active
    round and its base version.
-2. The node trains locally and produces a `TrainingUpdate`: a content-addressed
-   reference to its delta, metrics, the knowledge items it learned from, and a
-   signature over the canonical JSON of all of that.
-3. The aggregator validates the shape, then the semantics: delta size, no
-   replay, one update per node per round, and the signature against the public
-   key it fetches from the coordinator. It stores the reference and reports
-   progress to the coordinator (best-effort).
-4. `POST /v1/merges` folds a round's updates into a `MergeCandidate` (mock
-   aggregation: metrics combined per method, checkpoint hash derived from the
-   update digests) and forwards it to governance (best-effort).
+2. The node trains locally (simulated) and gets a real adapter delta
+   (safetensors). It asks the aggregator for an upload target, uploads the
+   delta (straight to R2 with a presigned URL, or through the aggregator), and
+   submits a `TrainingUpdate`: a content-addressed reference to that delta,
+   metrics, the knowledge items it learned from, and a signature over the
+   canonical JSON of all of that.
+3. The aggregator validates the shape, then the semantics: delta size, the
+   delta's location, no replay, one update per node per round, the signature
+   against the public key it fetches from the coordinator, and that the stored
+   bytes match the signed digest. It records the update and reports progress to
+   the coordinator (directly on Node, through a Queue on Cloudflare).
+4. An operator calls `POST /v1/merges`. The aggregator writes a manifest (which
+   deltas, with which weights) and a pending candidate, then its pipeline
+   (a Workflow on Cloudflare) aggregates the deltas with FedAvg (or median,
+   trimmed mean), records the merged checkpoint and forwards the candidate to
+   governance.
 5. Reviewers post decisions. When approvals reach the quorum the candidate is
    approved and governance asks the coordinator to publish it (best-effort;
    failures are recorded on the review, never hidden).
@@ -78,11 +87,19 @@ both sides. Errors share one envelope: `{ error: { code, message, details? } }`.
 
 ## Persistence
 
-Each service keeps one JSON file under `DATA_DIR` (default `./data`, seeded on
-first run, git-ignored). `createJsonStore` in `service-kit` gives atomic writes
-and serialised mutations behind a three-method interface (`read`, `update`,
-`reset`). Swapping it for SQLite or Postgres means re-implementing that
-interface, not touching routes. Run one instance per data directory.
+Services persist through a three-method document store (`read`, `update`,
+`reset`) or, where queries matter, a small repository interface:
+
+| Service | Node | Cloudflare |
+| --- | --- | --- |
+| coordinator | JSON files | a `Federation` Durable Object (nodes, rounds); D1 (version history) |
+| governance | JSON file | a `MergeReview` Durable Object per candidate; D1 projection for listings |
+| aggregator | JSON file + filesystem objects | D1 tables + R2 buckets |
+| inference edge | JSON file | D1 (served registry) + KV (response cache) |
+
+Local Node data lives under `DATA_DIR` (default `./data`, seeded on first run,
+git-ignored). See [ADR 0003](../decisions/0003-cloudflare.md) for the
+Cloudflare mapping and [the deploy runbook](../deploy/cloudflare.md).
 
 ## Configuration
 
@@ -100,14 +117,21 @@ when the coordinator is unreachable. The live panel is a client component that
 polls `GET /api/federation` (a route handler that returns the same snapshot) every
 fifteen seconds, so service URLs stay server-side and no CORS is involved.
 
+## Trust boundaries
+
+- **Public** callers can read everything, register nodes, request upload
+  targets and submit signed updates.
+- **Internal** callers (other services) can report round progress, submit merge
+  candidates and publish versions. On Cloudflare only service bindings reach
+  the `InternalApi` entrypoints; on Node an `INTERNAL_API_TOKEN` can be set.
+- **Operators** hold `OPERATOR_TOKEN` to start merges and force edge syncs.
+- **Reviewers** are identified by Cloudflare Access; the Worker verifies the
+  Access JWT on every decision.
+
 ## What is deliberately not here yet
 
-- Real training and real aggregation. The seams are `simulateLocalTraining` and
-  `buildMergeCandidate`.
-- Artifact storage. Deltas and checkpoints are referenced by URI and hash; nothing
-  moves bytes yet.
-- Durable cross-service messaging. Signals are best-effort HTTP calls with logged
-  failures; a queue comes when a lost signal would cost something.
-- Reviewer identity. `reviewerId` is a string; authentication is a later layer.
-- Edge sync. The inference edge serves its own registry copy; pulling published
-  versions from the coordinator is the next milestone.
+- Real training. The seam is `simulateLocalTraining`; the deltas it produces
+  are real safetensors, and aggregation over them is real arithmetic.
+- Reviewer and node reputation, signed heartbeats, and per-node rate limits.
+- Normalised node registry tables for federations past a few thousand nodes
+  (ADR 0003).

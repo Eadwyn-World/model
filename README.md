@@ -4,14 +4,15 @@
 training recipes are public; Catalyst Pods, homes and devices train it locally;
 only learning travels; every merge is reviewed through governance.
 
-This repository is the platform behind that idea, as one monorepo with several
-deployable services and one set of typed contracts. It is a first milestone:
-the architecture, the contracts, the service skeletons, a mock node runtime and
-the public **AI Model** page are real and run end to end; the machine learning
-is mocked behind clearly marked seams.
+This repository is the platform behind that idea: one monorepo, several
+deployable services, one set of typed contracts, and two runtimes. Every
+service runs on Node for local development and self-hosting, and on
+**Cloudflare Workers** in production (Durable Objects, D1, R2, Queues,
+Workflows, a Container, Workers AI, Access). Training stays on the nodes.
 
 - **Philosophy** → [`docs/philosophy.md`](docs/philosophy.md) (drawn from *The World of Eadwyn*)
 - **Architecture** → [`docs/architecture/overview.md`](docs/architecture/overview.md)
+- **Deploying on Cloudflare** → [`docs/deploy/cloudflare.md`](docs/deploy/cloudflare.md)
 - **Node roles** → [`docs/architecture/node-roles.md`](docs/architecture/node-roles.md)
 - **Decisions** → [`docs/decisions/`](docs/decisions/)
 
@@ -21,56 +22,73 @@ Requirements: Node 22.12+ and pnpm 10 (`corepack enable` gives you the pinned ve
 
 ```bash
 pnpm install
-pnpm dev            # coordinator, aggregator, governance, inference edge and the web app
+pnpm dev            # Node: coordinator, aggregator, governance, inference edge, merge runner, web
 ```
 
-Then open <http://localhost:3000>. The federation panel reads live data from the
+Open <http://localhost:3000>. The federation panel reads live data from the
 coordinator; if the coordinator is down the page renders a built-in snapshot and
-says so.
-
-Run one federated training round against the running stack:
+says so. Then run one federated round:
 
 ```bash
 pnpm demo:round
 ```
 
-Three mock nodes register, train locally, submit signed updates; the aggregator
-proposes a merge; two reviewers approve; the coordinator publishes the next
-version and opens the next round. Reload the page and the readout has changed.
+Three mock nodes register, train locally, upload real adapter deltas and submit
+signed updates; an operator starts the merge and the pipeline aggregates the
+deltas (FedAvg over safetensors); two reviewers approve; the coordinator
+publishes the next version and opens the next round; the inference edge syncs
+to it. Reload the page and the readout has changed.
+
+### The same stack on Cloudflare, locally
+
+```bash
+pnpm dev:cf         # every Worker under local workerd, same ports; web via OpenNext
+pnpm demo:round     # same script, same flow, now through Durable Objects, D1, R2, Queues and a Workflow
+```
+
+No Cloudflare account is needed locally: wrangler simulates every resource.
+Deploying for real is in [the runbook](docs/deploy/cloudflare.md):
+`pnpm cf:provision`, set secrets, configure Access, `pnpm cf:deploy`.
 
 No `.env` is needed. Every variable has a schema and a working default; see
-[`.env.example`](.env.example) and each app's own `.env.example`.
+[`.env.example`](.env.example) and each app's `.env.example` and
+`.dev.vars.example`.
 
 ## Scripts
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | every app in watch mode (Turborepo) |
-| `pnpm dev:services` | the four backend services only |
-| `pnpm dev:web` | the web app only (renders the snapshot when services are down) |
-| `pnpm demo:round` | one federated round, end to end, against the local services |
+| `pnpm dev` | every app on Node, in watch mode (Turborepo) |
+| `pnpm dev:services` / `pnpm dev:web` | the backend services only / the web app only |
+| `pnpm dev:cf` | every Worker under local workerd (`wrangler dev`) plus the OpenNext web preview |
+| `pnpm demo:round` | one federated round, end to end, against whichever stack is running |
 | `pnpm check` | lint + type-check + tests |
+| `pnpm test` | Vitest: Node suites, then the same contracts inside workerd |
+| `pnpm test:workers` | only the workerd suites |
+| `pnpm typecheck` | `tsc` for every Node program and every Worker program |
 | `pnpm lint` / `pnpm lint:fix` / `pnpm format` | Biome |
-| `pnpm typecheck` | `tsc --noEmit` in every package |
-| `pnpm test` | Vitest in every package that has tests |
 | `pnpm build` | bundles each service to `dist/` (tsup) and builds the web app (Next) |
-| `pnpm start:services` | runs the built service bundles |
+| `pnpm cf:check` | generated Worker types are current; every Worker bundles (`wrangler deploy --dry-run`) |
+| `pnpm cf:types` | regenerate Worker `Env` types from each `wrangler.jsonc` |
+| `pnpm cf:provision` | create D1, KV, R2 and Queues on your account and write their ids into the configs |
+| `pnpm cf:deploy` | migrate and deploy every Worker, in dependency order |
 
-## Ports and services
+## Services
 
-| Service | Port | Purpose |
-| --- | --- | --- |
-| `apps/web` | 3000 | the AI Model page |
-| `apps/coordinator` | 4101 | node registry, training rounds, global model version, `GET /v1/stats` |
-| `apps/aggregator` | 4102 | receives signed updates, validates them, proposes merge candidates |
-| `apps/governance` | 4103 | pending merges, reviewer decisions, quorum, publish on approval |
-| `apps/inference-edge` | 4104 | health, served model metadata, mock inference |
+| Service | Port | Node | Cloudflare |
+| --- | --- | --- | --- |
+| `apps/web` | 3000 | Next.js | OpenNext Worker, KV ISR cache, service bindings |
+| `apps/coordinator` | 4101 | JSON files | `Federation` Durable Object (nodes, rounds), D1 (versions) |
+| `apps/aggregator` | 4102 | JSON file, filesystem objects | D1, R2 (presigned uploads), Queue, Workflow, Container |
+| `apps/governance` | 4103 | JSON file | Durable Object per merge, D1 projection, Access |
+| `apps/inference-edge` | 4104 | JSON file, mock or Pod proxy | Workers AI (+ LoRA) or Pod proxy, KV cache, D1, cron |
+| `apps/merge-runner` | 4105 | aggregation jobs over the filesystem | Container image, R2 via the S3 API |
 
-A few endpoints to poke at once the stack is up:
+A few endpoints to poke at once a stack is up:
 
 ```bash
 curl localhost:4101/v1/stats                 # the federation readout
-curl localhost:4103/v1/merges                # merges waiting for review
+curl localhost:4103/v1/merges?status=all     # merges and their review state
 curl localhost:4103/v1/decisions             # the decision log
 curl -X POST localhost:4104/v1/infer -H 'content-type: application/json' \
      -d '{"prompt":"How does the mind rebalance?"}'
@@ -81,202 +99,45 @@ curl -X POST localhost:4104/v1/infer -H 'content-type: application/json' \
 ```
 ├─ .github/
 │  └─ workflows/
-│     └─ ci.yml
-├─ apps/  # deployables (one process each)
-│  ├─ aggregator/  # Hono · signed updates → merge candidates (4102)
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ aggregator.test.ts
-│  │  │  ├─ domain/
-│  │  │  │  ├─ merge.ts
-│  │  │  │  └─ validate.ts
-│  │  │  ├─ app.ts
-│  │  │  ├─ env.ts
-│  │  │  ├─ index.ts
-│  │  │  └─ state.ts
-│  │  ├─ .env.example
-│  │  ├─ package.json
-│  │  ├─ tsconfig.json
-│  │  └─ tsup.config.ts
-│  ├─ coordinator/  # Hono · registry, rounds, model version, /v1/stats (4101)
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ coordinator.test.ts
-│  │  │  ├─ domain/
-│  │  │  │  ├─ nodes.ts
-│  │  │  │  ├─ rounds.ts
-│  │  │  │  └─ stats.ts
-│  │  │  ├─ app.ts
-│  │  │  ├─ env.ts
-│  │  │  ├─ index.ts
-│  │  │  └─ state.ts
-│  │  ├─ .env.example
-│  │  ├─ package.json
-│  │  ├─ tsconfig.json
-│  │  └─ tsup.config.ts
-│  ├─ governance/  # Hono · review queue, decisions, quorum (4103)
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ governance.test.ts
-│  │  │  ├─ domain/
-│  │  │  │  └─ review.ts
-│  │  │  ├─ app.ts
-│  │  │  ├─ env.ts
-│  │  │  ├─ index.ts
-│  │  │  └─ state.ts
-│  │  ├─ .env.example
-│  │  ├─ package.json
-│  │  ├─ tsconfig.json
-│  │  └─ tsup.config.ts
-│  ├─ inference-edge/  # Hono · health, served model, mock inference (4104)
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ inference-edge.test.ts
-│  │  │  ├─ app.ts
-│  │  │  ├─ env.ts
-│  │  │  ├─ index.ts
-│  │  │  └─ mock-inference.ts
-│  │  ├─ .env.example
-│  │  ├─ package.json
-│  │  ├─ tsconfig.json
-│  │  └─ tsup.config.ts
-│  └─ web/  # Next.js · the AI Model page (port 3000)
-│     ├─ src/
-│     │  ├─ app/
-│     │  │  ├─ api/
-│     │  │  │  └─ federation/
-│     │  │  │     └─ route.ts
-│     │  │  ├─ globals.css
-│     │  │  ├─ icon.svg
-│     │  │  ├─ layout.tsx
-│     │  │  └─ page.tsx
-│     │  ├─ components/
-│     │  │  ├─ contribute.module.css
-│     │  │  ├─ contribute.tsx
-│     │  │  ├─ federation-panel.module.css
-│     │  │  ├─ federation-panel.tsx
-│     │  │  ├─ hero.module.css
-│     │  │  ├─ hero.tsx
-│     │  │  ├─ learning-loop.module.css
-│     │  │  ├─ learning-loop.tsx
-│     │  │  ├─ philosophy.module.css
-│     │  │  ├─ philosophy.tsx
-│     │  │  ├─ principles.module.css
-│     │  │  ├─ principles.tsx
-│     │  │  ├─ site-footer.module.css
-│     │  │  ├─ site-footer.tsx
-│     │  │  ├─ site-header.module.css
-│     │  │  └─ site-header.tsx
-│     │  ├─ content/
-│     │  │  └─ ai-model.ts
-│     │  └─ lib/
-│     │     ├─ env.ts
-│     │     └─ federation.ts
-│     ├─ .env.example
-│     ├─ next.config.ts
-│     ├─ package.json
-│     └─ tsconfig.json
-├─ docs/  # architecture, node roles, philosophy, decisions
+│     ├─ ci.yml
+│     └─ deploy-cloudflare.yml
+├─ apps/  # deployables (Node entry + Cloudflare Worker entry each)
+│  ├─ aggregator/  # uploads, signed updates, merges · D1, R2, Queue, Workflow, Container
+│  ├─ coordinator/  # registry, rounds, model version · Federation Durable Object + D1
+│  ├─ governance/  # review queue, decisions, quorum · Durable Object per merge + D1, Access
+│  ├─ inference-edge/  # served model, inference · Workers AI / Pod proxy, KV, D1, cron
+│  ├─ merge-runner/  # large aggregation jobs · Cloudflare Container or Pod GPU
+│  └─ web/  # Next.js · the AI Model page · OpenNext Worker
+├─ docs/  # architecture, deploy runbook, philosophy, decisions
 │  ├─ architecture/
 │  │  ├─ node-roles.md
 │  │  └─ overview.md
 │  ├─ decisions/
 │  │  ├─ 0001-monorepo.md
-│  │  └─ 0002-source-exported-packages.md
+│  │  ├─ 0002-source-exported-packages.md
+│  │  └─ 0003-cloudflare.md
+│  ├─ deploy/
+│  │  └─ cloudflare.md
 │  └─ philosophy.md
 ├─ packages/  # libraries (export TypeScript source)
-│  ├─ federation-sdk/  # typed client for all services
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ client.test.ts
-│  │  │  ├─ client.ts
-│  │  │  ├─ http.ts
-│  │  │  ├─ index.ts
-│  │  │  └─ wait.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
+│  ├─ federation-sdk/  # typed client over HTTP or service bindings
 │  ├─ knowledge-index/  # knowledge items with provenance + seed
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ index.test.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ seed.ts
-│  │  │  └─ types.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
-│  ├─ model-registry/  # current version, publish, history (JSON)
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ registry.test.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ registry.ts
-│  │  │  └─ seed.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
-│  ├─ service-kit/  # JSON store, env, Hono app factory, logger
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ json-store.test.ts
-│  │  │  ├─ app.ts
-│  │  │  ├─ best-effort.ts
-│  │  │  ├─ env.ts
-│  │  │  ├─ errors.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ json-store.ts
-│  │  │  ├─ logger.ts
-│  │  │  ├─ server.ts
-│  │  │  └─ validation.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
-│  ├─ shared-protocol/  # zod schemas + types for every contract; /signing, /fixtures
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ schemas.test.ts
-│  │  │  ├─ api.ts
-│  │  │  ├─ canonical.ts
-│  │  │  ├─ federation.ts
-│  │  │  ├─ fixtures.ts
-│  │  │  ├─ governance.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ merge.ts
-│  │  │  ├─ model.ts
-│  │  │  ├─ node.ts
-│  │  │  ├─ primitives.ts
-│  │  │  ├─ prng.ts
-│  │  │  ├─ signing.ts
-│  │  │  ├─ training.ts
-│  │  │  └─ version.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
-│  ├─ training-runtime/  # mock local node: register → prepare → submit
-│  │  ├─ src/
-│  │  │  ├─ __tests__/
-│  │  │  │  └─ node.test.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ mock-training.ts
-│  │  │  └─ node.ts
-│  │  ├─ package.json
-│  │  └─ tsconfig.json
-│  └─ ui/  # tokens, base styles, lattice/root motifs, primitives
-│     ├─ src/
-│     │  ├─ button.tsx
-│     │  ├─ format.ts
-│     │  ├─ index.ts
-│     │  ├─ lattice.tsx
-│     │  ├─ root-lines.tsx
-│     │  ├─ section.tsx
-│     │  └─ wordmark.tsx
-│     ├─ styles/
-│     │  ├─ base.css
-│     │  └─ tokens.css
-│     ├─ package.json
-│     └─ tsconfig.json
-├─ scripts/  # demo-round.ts — one federated round end to end
-│  └─ demo-round.ts
+│  ├─ model-registry/  # current version, idempotent publish, adopt, history
+│  ├─ service-kit/  # stores (file, Durable Object, D1), object storage (R2, S3), auth, Hono factory
+│  ├─ shared-protocol/  # zod contracts; WebCrypto signing; object keys; fixtures
+│  ├─ training-runtime/  # mock local node: register → prepare (upload) → submit
+│  ├─ ui/  # tokens, base styles, lattice/root motifs, primitives
+│  └─ weights/  # safetensors codec, FedAvg / median / trimmed mean, aggregation job
+├─ scripts/  # demo round, Cloudflare provisioning, dev vars
+│  ├─ cf-provision.ts
+│  ├─ demo-round.ts
+│  └─ ensure-dev-vars.mjs
+├─ .dockerignore
 ├─ .editorconfig
 ├─ .env.example
 ├─ .gitignore
 ├─ .npmrc
+├─ README.md
 ├─ biome.json
 ├─ package.json
 ├─ pnpm-lock.yaml
@@ -286,70 +147,89 @@ curl -X POST localhost:4104/v1/infer -H 'content-type: application/json' \
 └─ turbo.json
 ```
 
-`apps/*` are deployables; `packages/*` are libraries. Apps depend on packages,
-packages never depend on apps, and `shared-protocol` depends on nothing but zod.
-Packages export TypeScript source (no build step); services run with `tsx` in
-development and bundle with `tsup` for production. See ADR
-[0001](docs/decisions/0001-monorepo.md) and [0002](docs/decisions/0002-source-exported-packages.md).
+`apps/*` are deployables; `packages/*` are libraries. Each app has a Node
+entrypoint (`src/index.ts`) and a Worker entrypoint (`src/worker/index.ts`)
+that build the same routes; only the storage adapters differ. Packages export
+TypeScript source and never depend on apps. See ADRs
+[0001](docs/decisions/0001-monorepo.md),
+[0002](docs/decisions/0002-source-exported-packages.md) and
+[0003](docs/decisions/0003-cloudflare.md).
 
 ## How a round works
 
-1. A node registers with the coordinator (`registerNode`), sending its Ed25519
-   public key; registration is idempotent on the key.
-2. It trains locally and prepares a `TrainingUpdate`: a content-addressed
-   reference to its delta, metrics, the knowledge items it learned from, and a
-   signature over the canonical JSON. Data never leaves the node.
-3. The aggregator validates the shape and the semantics (size, replay, one
-   update per node per round, signature against the coordinator's registry),
-   stores the reference and reports progress.
-4. `POST /v1/merges` folds the round into a `MergeCandidate` (mock aggregation)
-   and forwards it to governance.
-5. Reviewers record decisions with rationales. At quorum the candidate is
-   approved and governance asks the coordinator to publish.
-6. The coordinator publishes the next version, closes the round and opens a new
-   one on the new base. The page's readout changes.
+1. A node registers with the coordinator, sending its Ed25519 public key;
+   registration is idempotent on the key.
+2. It trains locally and gets an adapter delta (safetensors). It asks the
+   aggregator for an upload target, uploads the delta (straight to R2 with a
+   presigned URL, or through the aggregator with a signed URL), then submits a
+   `TrainingUpdate` that references the delta by key and sha256, signed over
+   its canonical JSON. Data never leaves the node.
+3. The aggregator checks the update's size, where its delta lives, replay, one
+   update per node per round, the signature against the coordinator's
+   registry, and that the stored bytes match the signed digest. It records the
+   update and reports progress to the coordinator (a Queue on Cloudflare).
+4. An operator starts the merge. The aggregator writes a manifest (which deltas,
+   with which weights) and a pending candidate; its pipeline (a Workflow on
+   Cloudflare) re-verifies every delta, aggregates them, records the merged
+   checkpoint and forwards the candidate to governance.
+5. Reviewers record decisions with rationales, identified by Cloudflare Access
+   in production. At quorum the candidate is approved and governance asks the
+   coordinator to publish; if the coordinator is unreachable it retries.
+6. The coordinator publishes the next version (idempotently per candidate),
+   closes the round and opens the next one. The inference edge adopts the new
+   version on its next sync, and the page's readout changes.
 
 Every request and response crosses the boundary through schemas in
 `@eadwyn/shared-protocol`; services validate inbound bodies and the SDK
-validates responses, so a contract change breaks both sides at type-check time.
+validates responses. Routes that change what the federation believes are
+internal-only: on Cloudflare only service bindings reach them.
 
 ## Environment variables
 
+Every variable has a default; production values live in each `wrangler.jsonc`
+(`vars`) and in Worker secrets.
+
 | Variable | Default | Used by |
 | --- | --- | --- |
-| `PORT`, `HOST` | per app (`4101`…`4104`, `3000`; `0.0.0.0`) | every app |
-| `DATA_DIR` | `./data` | services (one seeded JSON file each, git-ignored) |
-| `LOG_FORMAT`, `LOG_LEVEL` | `pretty`, `info` | services |
-| `COORDINATOR_URL`, `AGGREGATOR_URL`, `GOVERNANCE_URL`, `INFERENCE_EDGE_URL` | `http://localhost:41xx` | aggregator, governance, web, SDK, demo |
+| `PORT`, `HOST`, `DATA_DIR`, `LOG_FORMAT`, `LOG_LEVEL` | per app, `./data`, `pretty`, `info` | Node services |
+| `COORDINATOR_URL`, `AGGREGATOR_URL`, `GOVERNANCE_URL`, `INFERENCE_EDGE_URL` | `http://localhost:41xx` | Node services, web, SDK, demo |
+| `SEED_MODE` | `fixtures` on Node, `genesis` on Cloudflare | coordinator, governance, aggregator, edge |
+| `INTERNAL_API_TOKEN` | unset (local: everyone is internal) | Node services |
+| `OPERATOR_TOKEN` | unset | aggregator (start merges), edge (force sync) |
 | `COORDINATOR_EXPECTED_NODES`, `COORDINATOR_ONLINE_WINDOW_MINUTES` | `128`, `360` | coordinator |
 | `AGGREGATOR_VERIFY_SIGNATURES`, `AGGREGATOR_MAX_DELTA_BYTES` | `true`, `64 MiB` | aggregator |
+| `UPLOAD_TOKEN_SECRET`, `UPLOAD_TTL_SECONDS` | per process on Node, `900` | aggregator (direct uploads) |
+| `AGGREGATION_BACKEND`, `INLINE_AGGREGATION_MAX_BYTES` | `auto`, `32 MiB` | aggregator |
+| `MERGE_RUNNER_URL`, `MERGE_RUNNER_TOKEN` | unset | aggregator, merge runner |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_*_BUCKET` | unset, `eadwyn-deltas` / `eadwyn-checkpoints` | aggregator (presigned uploads, Container) |
 | `GOVERNANCE_APPROVAL_QUORUM`, `GOVERNANCE_REJECTION_QUORUM` | `2`, `1` | governance |
-| `EADWYN_DATA_SOURCE` | `auto` (`mock` / `live`) | web |
-| `NEXT_PUBLIC_SOURCE_URL` | this repository | web |
+| `REVIEWER_AUTH`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | `none` on Node, `access` on Cloudflare | governance |
+| `INFERENCE_BACKEND`, `WORKERS_AI_MODEL`, `WORKERS_AI_LORA` | `auto`, a LoRA-capable Mistral 7B | inference edge |
+| `UPSTREAM_INFERENCE_URL`, `UPSTREAM_ACCESS_CLIENT_ID`, `UPSTREAM_ACCESS_CLIENT_SECRET` | unset | inference edge (Pod proxy) |
+| `EADWYN_DATA_SOURCE`, `NEXT_PUBLIC_SOURCE_URL` | `auto`, this repository | web |
 
 ## Testing
 
-`pnpm test` runs Vitest per package: schema and signing tests for
-`shared-protocol`, store/registry/index/SDK/runtime tests for the packages, and
-one route-level test file per service (the Hono app is exercised in-process
-with `app.request`, against a temporary data directory). CI
-(`.github/workflows/ci.yml`) runs lint, type-check, tests and the full build.
+Each service has a contract suite (`src/__tests__/contract.ts`) that runs twice:
+against the Node app, and inside workerd against the real Worker entrypoints
+(`test/workers`), with real Durable Objects, D1 (with migrations), R2, KV,
+Queues and Workflows. Stand-ins replace only the neighbouring services behind
+service bindings. Packages have their own unit tests; `service-kit` also tests
+its Durable Object and D1 stores inside workerd. CI runs lint, both type-check
+programs, both test runs, the builds, and a deploy dry run of every Worker.
 
-## What is mocked, and where the seams are
+## What is simulated, and where the seams are
 
-| Mocked today | Seam |
+| Simulated today | Seam |
 | --- | --- |
-| local training | `simulateLocalTraining` in `packages/training-runtime` |
-| aggregation | `buildMergeCandidate` in `apps/aggregator/src/domain/merge.ts` |
-| inference | `mockInfer` in `apps/inference-edge` (responses carry `mock: true`) |
-| artifact storage | deltas and checkpoints are referenced by URI + sha256; no bytes move |
-| persistence | `createJsonStore` in `packages/service-kit` (swap for SQLite/Postgres behind the same interface) |
-| reviewer identity | `reviewerId` is a string; authentication is a later layer |
-| edge sync | the inference edge serves its own registry copy; pulling published versions is the next milestone |
+| local training | `simulateLocalTraining` in `packages/training-runtime`; its deltas are real safetensors, and everything after it is real |
+| local-development inference | the edge's labelled mock backend; production uses Workers AI with an Eadwyn LoRA adapter or a Pod GPU |
+| the Container locally | needs a Docker daemon; local merges run inline |
 
 ## Open questions for maintainers
 
 - **License.** The code is meant to be open source, but no `LICENSE` file has
   been added yet; choosing one (Apache-2.0 is the model versions' declared
-  license in the seed data) is a maintainer decision.
-- **Reviewer authentication and node admission** are the next governance steps.
+  license) is a maintainer decision.
+- **Node admission.** Registration is open; signed heartbeats and per-node rate
+  limits are the next steps before a public launch.

@@ -13,7 +13,7 @@ jobs:
   verify:
     name: Lint, type-check, test, build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -32,9 +32,11 @@ jobs:
       - name: Lint and format check
         run: pnpm lint
 
-      - name: Type-check
+      - name: Type-check (Node and Worker programs)
         run: pnpm typecheck
 
+      # Every contract suite runs twice: on Node, and inside workerd against
+      # the real Worker entrypoints (Durable Objects, D1, R2, Queues, Workflows).
       - name: Test
         run: pnpm test
 
@@ -42,4 +44,35 @@ jobs:
         run: pnpm build
         env:
           # The page is prerendered from the built-in snapshot in CI.
+          EADWYN_DATA_SOURCE: mock
+
+  cloudflare:
+    name: Cloudflare bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Generated Env types are current and every Worker bundles (no account needed).
+      - name: Check Worker types and bundles
+        run: pnpm cf:check
+        env:
+          WRANGLER_SEND_METRICS: "false"
+
+      - name: Build the web Worker with OpenNext
+        run: pnpm --filter @eadwyn/web cf:build
+        env:
+          WRANGLER_SEND_METRICS: "false"
           EADWYN_DATA_SOURCE: mock

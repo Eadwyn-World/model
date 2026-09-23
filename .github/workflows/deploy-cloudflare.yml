@@ -1,0 +1,45 @@
+name: Deploy to Cloudflare
+
+# Manual only. Needs repository (or environment) secrets CLOUDFLARE_API_TOKEN
+# and CLOUDFLARE_ACCOUNT_ID, and resources created with `pnpm cf:provision`.
+# See docs/deploy/cloudflare.md.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Migrate and deploy all Workers
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Add protection rules (required reviewers) to this environment in the repository settings.
+    environment: cloudflare
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify before deploying
+        run: pnpm typecheck && pnpm test
+
+      # Coordinator → governance → aggregator (builds the merge-runner Container
+      # image with Docker) → inference edge → web. Each applies its D1 migrations first.
+      - name: Deploy
+        run: pnpm cf:deploy
