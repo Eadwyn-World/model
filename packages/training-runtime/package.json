@@ -1,0 +1,24 @@
+{
+  "name": "@eadwyn/training-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Starter local node runtime: register with the coordinator, prepare a signed local update (mock training), submit it to the aggregator.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "@eadwyn/federation-sdk": "workspace:*",
+    "@eadwyn/shared-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

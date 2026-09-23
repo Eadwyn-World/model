@@ -1,0 +1,69 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalEnv": ["NODE_ENV", "CI"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "env": [
+        "COORDINATOR_URL",
+        "AGGREGATOR_URL",
+        "GOVERNANCE_URL",
+        "INFERENCE_EDGE_URL",
+        "NEXT_PUBLIC_*",
+        "EADWYN_*"
+      ],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": [
+        "PORT",
+        "HOST",
+        "DATA_DIR",
+        "LOG_FORMAT",
+        "COORDINATOR_URL",
+        "AGGREGATOR_URL",
+        "GOVERNANCE_URL",
+        "INFERENCE_EDGE_URL",
+        "NEXT_PUBLIC_*",
+        "EADWYN_*",
+        "AGGREGATOR_*",
+        "GOVERNANCE_*",
+        "COORDINATOR_*",
+        "INFERENCE_EDGE_*"
+      ]
+    },
+    "start": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["build"],
+      "env": [
+        "PORT",
+        "HOST",
+        "DATA_DIR",
+        "LOG_FORMAT",
+        "COORDINATOR_URL",
+        "AGGREGATOR_URL",
+        "GOVERNANCE_URL",
+        "INFERENCE_EDGE_URL",
+        "NEXT_PUBLIC_*",
+        "EADWYN_*",
+        "AGGREGATOR_*",
+        "GOVERNANCE_*",
+        "COORDINATOR_*",
+        "INFERENCE_EDGE_*"
+      ]
+    },
+    "test": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

@@ -1,0 +1,44 @@
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  background: linear-gradient(180deg, rgba(6, 10, 14, 0.86), rgba(6, 10, 14, 0.62));
+  border-bottom: 1px solid var(--line);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  min-height: 68px;
+}
+
+.nav {
+  display: none;
+  gap: 1.6rem;
+}
+
+.link {
+  color: var(--ink-1);
+  font-size: 0.93rem;
+  font-weight: 500;
+}
+
+.link:hover {
+  color: var(--ink-0);
+  text-decoration: none;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+}
+
+@media (min-width: 900px) {
+  .nav {
+    display: flex;
+  }
+}

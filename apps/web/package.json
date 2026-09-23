@@ -1,0 +1,31 @@
+{
+  "name": "@eadwyn/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public web surface. First page: the AI Model page — an open, federated mind, with a live federation readout.",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .next .turbo next-env.d.ts"
+  },
+  "dependencies": {
+    "@eadwyn/federation-sdk": "workspace:*",
+    "@eadwyn/shared-protocol": "workspace:*",
+    "@eadwyn/ui": "workspace:*",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

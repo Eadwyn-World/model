@@ -1,0 +1,80 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line-strong);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr);
+  grid-template-areas:
+    "index main"
+    "index aside";
+  gap: 0.9rem 0.6rem;
+  padding-block: 1.6rem;
+  border-bottom: 1px solid var(--line);
+  transition: background-color 160ms var(--ease-out);
+}
+
+.row:hover {
+  background: linear-gradient(90deg, rgba(36, 194, 173, 0.05), transparent 60%);
+}
+
+.rowIndex {
+  grid-area: index;
+  color: var(--teal-400);
+  font-size: 0.76rem;
+  padding-top: 0.5rem;
+}
+
+.rowMain {
+  grid-area: main;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.rowTitle {
+  font-size: clamp(1.4rem, 2.2vw, 1.8rem);
+}
+
+.rowBody {
+  color: var(--ink-1);
+  max-width: 56ch;
+}
+
+.rowAside {
+  grid-area: aside;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.2rem;
+}
+
+.hint {
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-1);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.rowLink {
+  font-size: 0.92rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+@media (min-width: 840px) {
+  .row {
+    grid-template-columns: 3rem minmax(0, 1.5fr) minmax(0, 1fr);
+    grid-template-areas: "index main aside";
+    gap: 2rem;
+    padding-block: 2rem;
+  }
+
+  .rowAside {
+    justify-content: flex-end;
+    align-content: center;
+  }
+}

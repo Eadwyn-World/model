@@ -1,0 +1,25 @@
+{
+  "name": "@eadwyn/shared-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed contracts (TypeScript types + zod schemas) shared by every Eadwyn service, SDK and app.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures": "./src/fixtures.ts",
+    "./signing": "./src/signing.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

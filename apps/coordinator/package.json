@@ -1,0 +1,29 @@
+{
+  "name": "@eadwyn/coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coordinator service: node registry, training rounds, the global model version and the public federation readout.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@eadwyn/model-registry": "workspace:*",
+    "@eadwyn/service-kit": "workspace:*",
+    "@eadwyn/shared-protocol": "workspace:*",
+    "hono": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

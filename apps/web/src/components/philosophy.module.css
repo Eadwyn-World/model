@@ -1,0 +1,78 @@
+.inner {
+  display: grid;
+  gap: 2.5rem;
+}
+
+.lead {
+  display: grid;
+  gap: 1.2rem;
+  align-content: start;
+}
+
+.quote {
+  margin: 0;
+}
+
+.epigraph {
+  font-family: var(--font-display);
+  font-size: clamp(1.7rem, 3vw, 2.5rem);
+  font-weight: 320;
+  font-style: italic;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  color: var(--ink-0);
+  font-variation-settings:
+    "opsz" 96,
+    "SOFT" 60,
+    "WONK" 1;
+}
+
+.attribution {
+  margin-top: 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.link {
+  margin-left: -0.6em;
+}
+
+.tenets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line-strong);
+}
+
+.tenet {
+  display: grid;
+  gap: 0.4rem;
+  padding-block: 1.3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.tenetTitle {
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-0);
+}
+
+.tenetBody {
+  color: var(--ink-2);
+  font-size: 0.96rem;
+  max-width: 48ch;
+}
+
+@media (min-width: 900px) {
+  .inner {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 5rem;
+  }
+}

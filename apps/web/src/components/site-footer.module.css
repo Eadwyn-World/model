@@ -1,0 +1,81 @@
+.footer {
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, transparent, rgba(36, 194, 173, 0.04));
+  padding-block: clamp(2.5rem, 6vw, 4.5rem) clamp(2rem, 4vw, 3rem);
+}
+
+.inner {
+  display: grid;
+  gap: 2rem;
+}
+
+.brand {
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+}
+
+.line {
+  color: var(--ink-2);
+  font-size: 0.95rem;
+  max-width: 34ch;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.4rem;
+  font-size: 0.92rem;
+}
+
+.links a {
+  color: var(--ink-1);
+}
+
+.quote {
+  margin: 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.05rem;
+  color: var(--ink-2);
+  font-variation-settings:
+    "opsz" 24,
+    "SOFT" 50,
+    "WONK" 1;
+}
+
+.quote footer {
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+@media (min-width: 900px) {
+  .inner {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-areas:
+      "brand links"
+      "quote quote";
+    gap: 2.5rem 4rem;
+  }
+
+  .brand {
+    grid-area: brand;
+  }
+
+  .links {
+    grid-area: links;
+    justify-content: flex-end;
+    align-content: start;
+  }
+
+  .quote {
+    grid-area: quote;
+  }
+}

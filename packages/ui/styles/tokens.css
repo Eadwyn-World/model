@@ -1,0 +1,64 @@
+/*
+ * Eadwyn design tokens.
+ *
+ * Dark, atmospheric, cool-teal. One ramp for the accent so every state
+ * (line, glow, fill, text) reads as the same material at different depths.
+ * Bioluminescent plants in the source text glow "pale blue and green";
+ * the teal ramp is that glow, the surfaces are the night around it.
+ */
+:root {
+  color-scheme: dark;
+
+  /* surfaces, deepest to most raised */
+  --bg-0: #060a0e;
+  --bg-1: #0a1015;
+  --bg-2: #0f171d;
+  --bg-3: #152028;
+  --bg-4: #1b2830;
+
+  /* ink */
+  --ink-0: #eef5f3;
+  --ink-1: #b9cac6;
+  --ink-2: #7f948f;
+  --ink-3: #536660;
+
+  /* accent ramp (teal) */
+  --teal-100: #d9fbf5;
+  --teal-200: #b6f3ea;
+  --teal-300: #86ebdc;
+  --teal-400: #4fdcc8;
+  --teal-500: #24c2ad;
+  --teal-600: #189a8a;
+  --teal-700: #12695f;
+  --teal-800: #0e463f;
+  --teal-900: #0a2e2b;
+
+  /* status (reserved; never used as series colors) */
+  --amber: #e6b866;
+  --amber-deep: #4a3a18;
+  --rose: #e0788a;
+  --rose-deep: #4a1f27;
+
+  /* hairlines and glows derive from the accent */
+  --line: rgba(134, 235, 220, 0.1);
+  --line-strong: rgba(134, 235, 220, 0.22);
+  --glow: rgba(36, 194, 173, 0.16);
+  --glow-strong: rgba(79, 220, 200, 0.32);
+
+  /* type */
+  --font-display: "Fraunces Variable", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-sans:
+    "Instrument Sans Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* rhythm */
+  --container: 1180px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --section-gap: clamp(72px, 12vw, 136px);
+  --radius-1: 6px;
+  --radius-2: 12px;
+  --radius-3: 20px;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}

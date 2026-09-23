@@ -1,0 +1,89 @@
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding-block: clamp(88px, 14vw, 168px) clamp(72px, 10vw, 128px);
+  isolation: isolate;
+}
+
+.lattice {
+  position: absolute;
+  inset: -8% -6% -4% -6%;
+  z-index: -1;
+  opacity: 0.85;
+  mask-image: radial-gradient(70% 80% at 62% 40%, #000 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(70% 80% at 62% 40%, #000 30%, transparent 78%);
+}
+
+.inner {
+  display: grid;
+  gap: 1.4rem;
+}
+
+.title {
+  max-width: 12ch;
+}
+
+.lede {
+  margin-top: 0.4rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.8rem;
+}
+
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  margin-top: clamp(2rem, 5vw, 3.4rem);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+
+.readoutItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  white-space: nowrap;
+}
+
+.readoutSep {
+  color: var(--ink-3);
+}
+
+.readoutDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal-400);
+  box-shadow: 0 0 0 3px rgba(79, 220, 200, 0.18);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.readoutDot[data-mode="snapshot"] {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(230, 184, 102, 0.18);
+  animation: none;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(79, 220, 200, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(79, 220, 200, 0.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readoutDot {
+    animation: none;
+  }
+}

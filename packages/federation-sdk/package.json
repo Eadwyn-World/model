@@ -1,0 +1,24 @@
+{
+  "name": "@eadwyn/federation-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed client SDK for the coordinator, aggregator, governance and inference-edge APIs. Works in Node and the browser.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "@eadwyn/shared-protocol": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

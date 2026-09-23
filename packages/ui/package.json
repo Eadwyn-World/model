@@ -1,0 +1,23 @@
+{
+  "name": "@eadwyn/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared design primitives for Eadwyn surfaces: design tokens, base styles, lattice and root motifs, a few components.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles/*": "./styles/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "typescript": "catalog:"
+  }
+}

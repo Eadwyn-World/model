@@ -1,0 +1,173 @@
+.panel {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-3);
+  background:
+    radial-gradient(600px 240px at 12% 0%, rgba(36, 194, 173, 0.1), transparent 70%),
+    linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  box-shadow: 0 30px 80px -50px rgba(36, 194, 173, 0.35);
+  padding: clamp(1.1rem, 2.6vw, 1.9rem);
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--teal-700);
+  background: var(--teal-900);
+  color: var(--teal-200);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+}
+
+.statusPill[data-mode="snapshot"] {
+  border-color: rgba(230, 184, 102, 0.4);
+  background: var(--amber-deep);
+  color: var(--amber);
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.statusMeta {
+  white-space: nowrap;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1.15rem 1.1rem 1.2rem;
+  background: var(--bg-2);
+  min-width: 0;
+}
+
+.tileWide {
+  grid-column: span 1;
+}
+
+.label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.value {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  font-family: var(--font-sans);
+  font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--ink-0);
+}
+
+.valueCompact {
+  font-size: clamp(1.5rem, 2.4vw, 1.9rem);
+  white-space: nowrap;
+}
+
+.valuePrefix {
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.valueTag {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--teal-300);
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--teal-900);
+}
+
+.sub {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.meter {
+  margin: 0.5rem 0 0;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--teal-900);
+  overflow: hidden;
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal-600), var(--teal-400));
+  transition: width 600ms var(--ease-out);
+}
+
+.foot {
+  margin: 1.1rem 0 0;
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 720px) {
+  .tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tileWide {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 1040px) {
+  .tiles {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .tile {
+    padding: 1.35rem 1.3rem 1.4rem;
+  }
+
+  .tileWide {
+    grid-column: span 2;
+  }
+}

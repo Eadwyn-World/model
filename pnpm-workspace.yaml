@@ -1,0 +1,28 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# One place to pin every third-party version. Packages reference them as "catalog:".
+catalog:
+  "@hono/node-server": ^2.1.1
+  "@hono/zod-validator": ^0.9.1
+  "@types/node": ^22.20.4
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
+  hono: ^4.13.8
+  next: ^16.3.6
+  react: ^19.3.0
+  react-dom: ^19.3.0
+  tsup: ^8.5.1
+  tsx: ^4.23.15
+  typescript: ~5.9.3
+  vitest: ^5.0.1
+  zod: ^4.6.5
+
+# pnpm 10 refuses to run install scripts unless the package is listed here.
+# Keep this list explicit so a new dependency cannot silently run code at install time.
+onlyBuiltDependencies:
+  - "@biomejs/biome"
+  - esbuild
+  - sharp
+  - unrs-resolver

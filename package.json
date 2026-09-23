@@ -1,0 +1,37 @@
+{
+  "name": "eadwyn-model",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eadwyn AI Model \u2014 an open, federated mind. Monorepo for the model platform: coordinator, aggregator, governance, inference edge and the public web surface.",
+  "license": "SEE LICENSE IN README.md",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:services": "turbo run dev --filter=./apps/* --filter=!@eadwyn/web",
+    "dev:web": "turbo run dev --filter=@eadwyn/web",
+    "build": "turbo run build",
+    "start:services": "turbo run start --filter=./apps/* --filter=!@eadwyn/web",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "demo:round": "tsx scripts/demo-round.ts",
+    "clean": "turbo run clean && rm -rf node_modules/.cache"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@eadwyn/federation-sdk": "workspace:*",
+    "@eadwyn/shared-protocol": "workspace:*",
+    "@eadwyn/training-runtime": "workspace:*",
+    "@types/node": "^22.20.4",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.3",
+    "typescript": "~5.9.3"
+  }
+}
